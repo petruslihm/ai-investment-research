@@ -1,0 +1,26 @@
+:root {
+  color: #e7eef7;
+  background: #0f1419;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+body { margin: 0; }
+.layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+aside {
+  background: #1a222c;
+  padding: 1rem;
+  border-right: 1px solid #2a3544;
+}
+.brand { font-weight: 700; margin-bottom: 1rem; }
+nav a {
+  display: block;
+  color: #8b9bb0;
+  text-decoration: none;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+}
+nav a.active { color: #fff; background: #243142; }
+main { padding: 2rem; }

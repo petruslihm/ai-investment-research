@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title }} · 투자 비서</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/shell.css?v=gptreport2" />
+</head>
+<body>
+  <div class="app">
+    <div id="nav-overlay" class="nav-overlay" hidden></div>
+    <aside class="nav" id="sidebar">
+      <div class="brand-row">
+        <div class="brand-mark">S</div>
+        <div>
+          <div class="brand">투자 비서</div>
+          <div class="stack">정보 제공 · 주문 없음</div>
+          {% if server_started_label %}
+          <div class="stack" title="이 서버 프로세스가 시작된 시각 — 재시작하면 바뀝니다">서버 시작 {{ server_started_label }}</div>
+          {% endif %}
+        </div>
+      </div>
+      <nav>
+        {% for href, label, icon in nav %}
+        <a href="{{ href }}" class="{% if path == href or (href != '/' and path.startswith(href + '/')) %}active{% endif %}">
+          <span class="nav-icon">{{ icon }}</span>{{ label }}
+        </a>
+        {% endfor %}
+      </nav>
+      <p class="nav-foot">거래 미실행 · 정보 제공용</p>
+    </aside>
+    <div class="stage">
+      <header class="mobile-bar">
+        <button type="button" class="menu-btn" id="menu-btn" aria-label="메뉴">☰</button>
+        <span class="mobile-title">{{ title }}</span>
+      </header>
+      <main>
+        <div class="page">{{ body | safe }}</div>
+        <p class="footnote">브로커 주문을 내지 않습니다. 과거 진단 수치는 실시간 성과로 표시하지 않습니다. 암호화폐는 BTC/USD만 다룹니다.</p>
+      </main>
+    </div>
+  </div>
+  <script>
+    const overlay = document.getElementById("nav-overlay");
+    const sidebar = document.getElementById("sidebar");
+    const btn = document.getElementById("menu-btn");
+    function closeNav() {
+      sidebar.classList.remove("open");
+      overlay.hidden = true;
+    }
+    btn.addEventListener("click", () => {
+      sidebar.classList.add("open");
+      overlay.hidden = false;
+    });
+    overlay.addEventListener("click", closeNav);
+  </script>
+</body>
+</html>

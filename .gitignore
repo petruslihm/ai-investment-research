@@ -1,0 +1,43 @@
+# Local credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Generated data and model artifacts (keep src/trading_system/models/)
+/data/
+/models/
+*.db
+*.duckdb
+*.duckdb.wal
+
+# Build output
+/dist/
+/build/
+*.egg-info/
+node_modules/
+ui/dist/
+ui/*.tsbuildinfo
+src/trading_system/ui/static/app/
+
+# Local editor settings and private working notes
+.ai/
+.cursor/
+CLAUDE.md
+AGENTS.md
+MASTER_SPEC.md
+
+# Local archives and operating-system files
+*.zip
+.DS_Store
+Thumbs.db
