@@ -38,6 +38,7 @@ from trading_system.actionability import actionable_view
 from trading_system.llm_client import STATUS_AVAILABLE
 from trading_system.openai_judge import resume_session_bounds_utc
 from trading_system.allocation import resolve_allocation_trace
+from trading_system.market.decision_data import price_description
 from trading_system.alerts import AlertKind, AlertRecord
 from trading_system.portfolio import Lot
 from trading_system.marked_units import marked_units_from_lots
@@ -349,6 +350,7 @@ _FAIL_REASONS = {
     "NOT_A_CANDIDATE",
     "NOT_SELECTED_FOR_FINAL_JUDGE",
     "BUDGET_EXCEEDED",
+    "INVALID_OUTPUT",
 }
 
 
@@ -464,7 +466,7 @@ def _units_panel(
     preview = rec.get("marked_units_intraday_preview")
     requested = row.get("requested_units")
     constrained = row.get("constrained_units")
-    rec_label = "AI 추천" if _real_llm_judge(llm) else "Quant 추천"
+    rec_label = ("GPT 최종 추천" if rec.get("input_id") else "AI 추천") if _real_llm_judge(llm) else ("Gemini 반영 대체 결과" if rec.get("source") == "research_adjusted" else "Quant 추천")
     rec_badge = (
         f'<span class="badge badge-neutral">{rec_label} —</span>'
         if view.suppressed
@@ -667,6 +669,13 @@ def _rec_card(
     else:
         act_label = "연구용"
     extra = ""
+    if rec.get("input_id"):
+        extra += (
+            f'<p class="hint price-provenance">{_esc(price_description(rec.get("price_snapshot")))}<br>'
+            f'입력 기준 {_esc(rec.get("input_as_of"))} · 일봉 피처·거래량: 완료 일봉만 사용</p>'
+        )
+        if not llm:
+            extra += '<p class="hint">GPT 최종 판단 미적용 · Gemini 반영 결과</p>'
     quant_bits = ""
     if rec.get("allocation_note"):
         extra += f'<p class="hint" style="margin:0.4rem 0 0">{_esc(rec.get("allocation_note"))}</p>'
@@ -678,7 +687,7 @@ def _rec_card(
         skip_act = {"NOT_A_CANDIDATE", "NOT_SELECTED_FOR_FINAL_JUDGE"}
         if llm_act and not (set(str(x) for x in (llm.get("override_reasons") or [])) & skip_act):
             extra += (
-                f'<p class="hint" style="margin:0.2rem 0 0">최종 액션: {_esc(_action(llm_act))}</p>'
+                f'<p class="hint" style="margin:0.2rem 0 0">최종 액션: {_esc(view.display_label)}</p>'
             )
         contrary = str(llm.get("contrary_evidence") or "").strip()
         if contrary and not contrary.startswith("llm_judge_status="):
@@ -842,7 +851,27 @@ _CONN_KO: dict[str, tuple[str, str]] = {
 }
 
 
+def _allocation_weight_text(alloc: dict, bucket: str) -> str:
+    if alloc.get("weights_confirmed") is False:
+        return "미확정"
+    value = sum((alloc.get("stock_weights") or {}).values()) if bucket == "stock" else alloc.get(f"{bucket}_weight")
+    return _pct(value)
+
+
+def _allocation_summary(alloc: dict) -> str:
+    text = " · ".join(f"{label} {_allocation_weight_text(alloc, key)}" for key, label in
+                      (("stock", "주식"), ("btc", "BTC"), ("cash", "현금")))
+    if alloc.get("weights_confirmed") is False:
+        known = alloc.get("known_stock_units") or {}
+        text += " · 전체 비중·합계 미확정"
+        if known:
+            text += f" · 평가 확인된 주식 {len(known)}종목 합계 {sum(known.values()):g}단위 (전체 합계 아님)"
+    return f'<p class="hint">적용 배분: {_esc(text)}</p>'
+
+
 def _deployment_card(alloc: dict) -> str:
+    if alloc.get("weights_confirmed") is False:
+        return _allocation_summary(alloc)
     note = str(alloc.get("deployment_note") or "").strip()
     if not note and not str(alloc.get("formula_version") or "").startswith("quant_alloc_v"):
         return ""
@@ -963,6 +992,8 @@ def _trace_table_row(row: dict) -> str:
 
 
 def _allocation_trace_html(alloc: dict, recs: list[dict]) -> str:
+    if alloc.get("weights_confirmed") is False:
+        return ""
     trace = resolve_allocation_trace(alloc, recs)
     if not trace.get("universe") and not trace.get("rows"):
         return ""
@@ -1079,13 +1110,20 @@ def _portfolio_committee_html(snap: dict) -> str:
             '<p class="hint" style="margin:0.45rem 0 0">GPT 응답이 비어 있습니다.</p>'
             "</div>"
         )
+    report_basis = (
+        "보유 평가 미확정으로 전체 배분 제약 검증과 실행은 불가합니다. 아래 수치는 실행 가능한 배분이 아닙니다."
+        if (snap.get("allocation") or {}).get("weights_confirmed") is False else
+        "검증된 구조화 판단과 배분 제약을 적용한 결과입니다. 아래 카드와 같은 저장 결과를 사용합니다."
+        if committee.get("validated") else
+        "과거 서술형 응답입니다. 아래 수치 추천과 연결되지 않은 기록일 수 있습니다."
+    )
     return f"""
         <div class="card portfolio-committee">
           <div class="row" style="padding-top:0">
             <strong>GPT 최종 투자 판단</strong>{_badge(status)}
           </div>
           <p class="hint" style="margin:0.45rem 0 0">
-            legacy-b와 같은 연속 대화의 마지막 GPT 답변 원문입니다.
+            {report_basis}
           </p>
           <div class="trace-scroll gpt-report-scroll">
             <div class="gpt-report">{_render_markdown_safe(final_text)}</div>
@@ -1096,9 +1134,13 @@ def _portfolio_committee_html(snap: dict) -> str:
 
 def render_recommendations_html(snap: dict, *, settings: Settings | None = None) -> str:
     cfg = settings or get_settings()
+    is_demo = snap.get("mode") == "DEMO / SYNTHETIC"
+    lead = ("DEMO: 가상 종목 3개의 예제 응답을 실제 검증·저장 코드로 처리했습니다. 실제 모델 예측이나 API 응답이 아닙니다."
+            if is_demo else "Quant는 후보와 숫자를 산출합니다. GPT의 검증된 최종 판단을 적용하며, 미적용 결과는 별도로 표시합니다. 주문은 넣지 않습니다.")
     base = _snap_base(snap)
     q_rows = [
-        r for r in snap.get("quant") or [] if "btc" not in str(r.get("instrument_id")).lower()
+        r for r in (snap.get("effective") if snap.get("decision_contract") else snap.get("quant")) or []
+        if "btc" not in str(r.get("instrument_id")).lower()
     ]
     l_map = _llm_map(
         [r for r in snap.get("llm_final") or [] if "btc" not in str(r.get("instrument_id")).lower()]
@@ -1113,13 +1155,16 @@ def render_recommendations_html(snap: dict, *, settings: Settings | None = None)
             total_base_units=base,
         )
     ]
-    buy.sort(
-        key=lambda r: (
-            _num_or_zero(r.get("recommended_units")),
-            _num_or_zero(r.get("confidence")),
-        ),
-        reverse=True,
-    )
+    def final_sort_key(r):
+        judged = l_map.get(str(r.get("instrument_id"))) or {}
+        rank = judged.get("final_rank")
+        target = _overlay_for_display(r, judged).get("recommended_units")
+        return (rank is None, float(rank or 0), -_num_or_zero(target), -_num_or_zero(r.get("confidence")))
+    buy.sort(key=final_sort_key)
+    def source_label(r):
+        if snap.get("decision_contract"):
+            return "GPT 최종" if str(r.get("instrument_id")) in l_map else "Gemini 반영 · GPT 미적용"
+        return "Quant"
     held_ids = {str(r.get("instrument_id")) for r in buy}
     held = [
         r
@@ -1134,12 +1179,12 @@ def render_recommendations_html(snap: dict, *, settings: Settings | None = None)
         if today:
             today_n += 1
         buy_cards.append(
-            _rec_card(rec, "Quant", rank=i, llm=llm, today=today, settings=cfg, total_base_units=base)
+            _rec_card(rec, source_label(rec), rank=(llm or {}).get("final_rank") or i, llm=llm, today=today, settings=cfg, total_base_units=base)
         )
     held_cards = "".join(
         _rec_card(
             r,
-            "Quant",
+            source_label(r),
             llm=l_map.get(str(r.get("instrument_id"))),
             settings=cfg,
             total_base_units=base,
@@ -1170,7 +1215,7 @@ def render_recommendations_html(snap: dict, *, settings: Settings | None = None)
         )
         near_miss = r.get("exclusion_reason") == "BELOW_MIN_POSITION"
         if r.get("research_summary_ko") or llm is not None or has_size or near_miss:
-            all_detail_cards_list.append(_rec_card(r, "Quant", llm=llm, settings=cfg, total_base_units=base))
+            all_detail_cards_list.append(_rec_card(r, source_label(r), llm=llm, settings=cfg, total_base_units=base))
         else:
             all_rows_list.append(_rec_row_compact(r, llm=llm, settings=cfg, total_base_units=base))
     all_detail_cards = "".join(all_detail_cards_list)
@@ -1180,6 +1225,15 @@ def render_recommendations_html(snap: dict, *, settings: Settings | None = None)
     alloc = snap.get("allocation") if isinstance(snap.get("allocation"), dict) else {}
     deploy_html = _deployment_card(alloc)
     trace_html = _allocation_trace_html(alloc, q_rows)
+    if snap.get("decision_contract"):
+        # Every current-contract view uses the effective allocation, including fallback.
+        deploy_html = _allocation_summary(alloc)
+        trace_html = ""
+    today_hint = (
+        "오늘 우선은 검증된 GPT 판단이 매수·추가이며 실행 가능한 종목입니다. 주문이 나가지는 않습니다."
+        if snap.get("decision_contract") else
+        "오늘 우선은 실행 가능하고, Quant와 LLM이 모두 매수·추가인 종목입니다. 주문이 나가지는 않습니다."
+    )
     committee_html = _portfolio_committee_html(snap)
     buy_block = (
         "".join(buy_cards)
@@ -1191,10 +1245,10 @@ def render_recommendations_html(snap: dict, *, settings: Settings | None = None)
     )
     return f"""
         <h1>종목 추천</h1>
-        <p class="lead">Quant는 ~500종을 후보와 숫자로 압축합니다. 최종 판단은 GPT-5.6 Sol이며, 주문은 넣지 않습니다.</p>
+        <p class="lead">{lead}</p>
         <div class="card">
           <div class="row" style="padding-top:0"><span>Quant</span>{_badge(quant_st)}</div>
-          <div class="row"><span>GPT-5.6 Sol 최종 판단</span>{_badge(judge)}</div>
+          <div class="row"><span>{'GPT 예제 형식 검증 · API 호출 없음' if is_demo else 'GPT 최종 판단'}</span>{_badge(judge)}</div>
           <div class="row"><span>오늘 우선</span><span>{today_n}개</span></div>
         </div>
         {committee_html}
@@ -1211,7 +1265,7 @@ def render_recommendations_html(snap: dict, *, settings: Settings | None = None)
           <button type="button" class="chip" data-filter="neutral">중립</button>
         </div>
         <h2 style="margin:0.4rem 0 0.6rem">매수 후보</h2>
-        <p class="hint" style="margin:0 0 0.75rem">오늘 우선은 실행 가능하고, Quant와 LLM이 모두 매수·추가인 종목입니다. 주문이 나가지는 않습니다.</p>
+        <p class="hint" style="margin:0 0 0.75rem">{today_hint}</p>
         <div id="buy-list">{buy_block}</div>
         {held_block}
         <h2 style="margin:1.25rem 0 0.6rem">전체 종목 점수</h2>
@@ -1226,7 +1280,7 @@ def render_recommendations_html(snap: dict, *, settings: Settings | None = None)
                 </tr></thead>
                 <tbody>{all_rows}</tbody>
               </table>
-            </div>''' if all_rows else '<p class="muted">아직 추천이 없습니다. 스캔을 실행하세요.</p>'
+            </div>''' if all_rows else '' if all_detail_cards else '<p class="muted">아직 추천이 없습니다. 스캔을 실행하세요.</p>'
         }</div>
         <script>
           const chips = document.querySelectorAll("#rec-filters .chip");
@@ -1249,6 +1303,26 @@ def render_recommendations_html(snap: dict, *, settings: Settings | None = None)
           search.addEventListener("input", applyFilters);
         </script>
         """
+
+
+def _btc_effective_cards(snap: dict, *, settings: Settings | None = None) -> str:
+    """Render one authoritative BTC stage. Other stages are stored, not shown in a comparison UI."""
+    rows = [
+        r for r in (snap.get("effective") if snap.get("decision_contract") else snap.get("quant")) or []
+        if "btc" in str(r.get("instrument_id")).lower()
+    ]
+    return "".join(
+        _rec_card(
+            r,
+            "GPT 최종" if r.get("source") == "llm_final" else (
+                "Gemini 반영 · GPT 미적용" if snap.get("decision_contract") else "Quant"
+            ),
+            llm=r if r.get("source") == "llm_final" else None,
+            settings=settings,
+            total_base_units=_snap_base(snap),
+        )
+        for r in rows
+    )
 
 
 def _conn_badge(key: str, status: str | None) -> str:
@@ -1642,9 +1716,10 @@ def create_app() -> FastAPI:
         stocks = alloc.get("stock_weights") or {}
         stock_w = sum(stocks.values()) if isinstance(stocks, dict) else 0.0
         n_names = len(stocks) if isinstance(stocks, dict) else 0
+        names_label = "평가 미확정" if alloc.get("weights_confirmed") is False else f"{n_names}개 종목"
         n_buy = sum(
             1
-            for r in snap.get("quant") or []
+            for r in (snap.get("effective") if snap.get("decision_contract") else snap.get("quant")) or []
             if "btc" not in str(r.get("instrument_id")).lower()
             and _is_buy_candidate(
                 r,
@@ -1769,9 +1844,9 @@ def create_app() -> FastAPI:
         <h1>대시보드</h1>
         <p class="lead">미국 주식 + BTC + USD 현금 개인 투자 비서</p>
         <div class="grid-stats">
-          <div class="stat"><span class="stat-label">주식 비중</span><span class="stat-value">{_esc(_pct(stock_w))}</span><span class="stat-sub">{n_names}개 종목</span></div>
-          <div class="stat"><span class="stat-label">BTC 비중</span><span class="stat-value">{_esc(_pct(alloc.get('btc_weight')))}</span><span class="stat-sub">슬리브 분리</span></div>
-          <div class="stat"><span class="stat-label">USD 현금</span><span class="stat-value">{_esc(_pct(alloc.get('cash_weight')))}</span><span class="stat-sub">100% 현금 허용</span></div>
+          <div class="stat"><span class="stat-label">주식 비중</span><span class="stat-value">{_esc(_allocation_weight_text(alloc, "stock"))}</span><span class="stat-sub">{names_label}</span></div>
+          <div class="stat"><span class="stat-label">BTC 비중</span><span class="stat-value">{_esc(_allocation_weight_text(alloc, "btc"))}</span><span class="stat-sub">슬리브 분리</span></div>
+          <div class="stat"><span class="stat-label">USD 현금</span><span class="stat-value">{_esc(_allocation_weight_text(alloc, "cash"))}</span><span class="stat-sub">100% 현금 허용</span></div>
           <div class="stat"><span class="stat-label">매수 신호</span><span class="stat-value">{n_buy}개</span><span class="stat-sub">Quant 추천</span></div>
         </div>
         <div class="card">
@@ -2113,23 +2188,14 @@ def create_app() -> FastAPI:
     @app.get("/btc", response_class=HTMLResponse)
     def btc(request: Request) -> HTMLResponse:
         snap = snapshot()
-        rows = [r for r in snap["quant"] if "btc" in str(r.get("instrument_id")).lower()]
-        llm_rows = [
-            r
-            for r in snap["llm_final"]
-            if "btc" in str(r.get("instrument_id")).lower()
-            and "NOT_A_CANDIDATE" not in (r.get("override_reasons") or [])
-        ]
-        cards = "".join(_rec_card(r, "Quant") for r in rows) + "".join(
-            _rec_card(r, "LLM", llm=r) for r in llm_rows
-        )
+        cards = _btc_effective_cards(snap, settings=live_settings())
         alloc = snap["allocation"]
         body = f"""
         <h1>BTC 신호</h1>
         <p class="lead">BTC/USD만 다룹니다. 즉시 현금이 아니며 이체 마찰(available / unsettled / transfer_pending / unavailable)을 반영합니다.</p>
         <div class="grid-stats">
-          <div class="stat"><span class="stat-label">BTC 비중</span><span class="stat-value">{_esc(_pct(alloc.get('btc_weight')))}</span><span class="stat-sub">슬리브 분리</span></div>
-          <div class="stat"><span class="stat-label">현금 비중</span><span class="stat-value">{_esc(_pct(alloc.get('cash_weight')))}</span><span class="stat-sub">히스테리시스 적용</span></div>
+          <div class="stat"><span class="stat-label">BTC 비중</span><span class="stat-value">{_esc(_allocation_weight_text(alloc, "btc"))}</span><span class="stat-sub">슬리브 분리</span></div>
+          <div class="stat"><span class="stat-label">현금 비중</span><span class="stat-value">{_esc(_allocation_weight_text(alloc, "cash"))}</span><span class="stat-sub">히스테리시스 적용</span></div>
         </div>
         {cards or '<div class="card"><p class="muted" style="margin:0">아직 BTC 신호가 없습니다. 스캔을 실행하세요.</p></div>'}
         """

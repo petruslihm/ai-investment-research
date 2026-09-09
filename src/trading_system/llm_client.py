@@ -20,7 +20,7 @@ from trading_system.providers.never_block import ProviderHttpError, RetryKind, R
 DEFAULT_LLM_MODEL = "gpt-5.6-sol"
 EXTRACT_PROMPT_VERSION = "extract_v2"
 JUDGE_PROMPT_VERSION = "judge_legacy_b_v6"
-LEGACY_B_RAW_PROMPT_VERSION = "legacy_b_raw_conversation_v4"
+LEGACY_B_RAW_PROMPT_VERSION = "legacy_b_structured_final_v5"
 EXTRACT_USER_CHARS = 8000
 EXTRACT_SYSTEM = (
     "Read this filing and return JSON with whatever actually changed. "
@@ -68,7 +68,7 @@ LEGACY_B_RAW_SYSTEM = (
     "이 대화는 legacy-b에서 사용자가 여러 프롬프트를 같은 GPT 대화에 차례로 붙여 넣던 과정을 그대로 재현한다. "
     "앞선 답변과 조사 내용을 다음 질문에서도 계속 기억하고, 제공된 Quant 수치는 후보 선별용 참고자료로만 사용하라. "
     "최신 사실이 필요한 단계에서는 웹 검색으로 뉴스, 실적, 컨센서스, 밸류에이션, 업황, 기관 재평가와 시장 이슈를 확인하라. "
-    "확인하지 못한 사실은 추측하지 말고 확인 불가라고 밝혀라. 모든 답변은 읽기 쉬운 한국어 일반 텍스트로 작성하라."
+    "확인하지 못한 사실은 추측하지 말고 확인 불가라고 밝혀라. 분석 답변은 한국어로 작성하되 최종 판단 단계는 지정된 JSON 스키마만 반환하라."
 )
 
 STATUS_NOT_CONFIGURED = "NOT_CONFIGURED"
@@ -338,5 +338,4 @@ def extract_filing(settings: Settings, text: str) -> dict[str, Any]:
         text[:EXTRACT_USER_CHARS],
         model,
     )
-
 

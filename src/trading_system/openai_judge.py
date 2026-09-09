@@ -1,10 +1,7 @@
-"""legacy-b's raw multi-turn GPT conversation. Recommendation only — never places orders.
+"""Multi-turn analysis followed by a validated structured final recommendation.
 
-The per-name/portfolio structured JSON judge (final_judge, final_portfolio_judge) was
-removed 2026-09: it was never wired into any production call path (v1_cycle.py only
-calls legacy_b_raw_conversation below). JUDGE_SYSTEM/JUDGE_PROMPT_VERSION still live in
-llm_client.py because llm_log.py reconstructs historical per-name judge transcripts from
-older ticks that predate this change.
+Uses the existing Responses conversation and RecommendationRecord contract; no
+extra judge call or order execution. Historical prose remains in the raw log.
 """
 
 from __future__ import annotations
@@ -17,6 +14,8 @@ from typing import Any
 import httpx
 
 from trading_system.config import Settings
+from trading_system.final_decision import CONTRACT_VERSION, FinalJudgment, parse_final_judgment
+from trading_system.market.decision_data import price_description
 from trading_system.filing_chunks import passages_as_text
 from trading_system.market.calendar import MARKET_TZ
 from trading_system.llm_client import (
@@ -133,7 +132,7 @@ def _legacy_b_candidate_line(row: dict[str, Any]) -> str:
     rank_score = row.get("rank_score")
     last_price = row.get("last_price")
     line = (
-        f"{ticker} | {position} | 현재가 {last_price if last_price is not None else '확인 필요'} | "
+        f"{ticker} | {position} | {price_description(row.get('price_snapshot'))} | "
         f"Quant 전망 {' / '.join(horizon_bits) or '없음'} | 신뢰도 {confidence} | "
         f"기회점수 {opportunity} | 순위점수 {rank_score} | "
         f"현재단위 {current_units} | Quant 제안단위 {recommended_units}"
@@ -184,11 +183,7 @@ def build_legacy_b_raw_turns(
     *,
     per_part: int = 6,
 ) -> list[dict[str, Any]]:
-    """Reproduce legacy-b's pasted prompts as one continuous GPT conversation.
-
-    The old JSON-recording turn is deliberately omitted. The user-facing result is
-    the model's untouched final prose response.
-    """
+    """Keep the research conversation; replace its final turn with a strict contract."""
     candidates = [row for row in (package.get("candidates") or []) if isinstance(row, dict)]
     part_size = max(1, min(10, int(per_part)))
     chunks = [candidates[i : i + part_size] for i in range(0, len(candidates), part_size)]
@@ -279,23 +274,37 @@ def build_legacy_b_raw_turns(
             {
                 "stage": "final_execution",
                 "use_search": False,
-                "prompt": """이제 앞선 모든 조사와 판단을 종합해 지금 당장 실행할 최종안을 작성해라.
-
-반드시 포함할 것:
-1. 순위 A — MU식 리레이팅 가능성 전체 순위
-2. 순위 B — 현재가 대비 저평가 전체 순위
-3. 순위 C — 모든 종목과 CASH를 함께 놓은 현금 대비 매력도 전체 순위
-4. 권장 현금 비중과 이유
-5. 보유 종목별 최종 판단: 추가매수/유지/매도 중 하나
-6. 신규 후보별 최종 판단: 매수/관망 중 하나
-7. 그 실행 뒤의 최종 포트폴리오 비중
-8. 판단을 뒤집을 핵심 위험과 확인 불가 항목
-
-이 답변이 사용자에게 그대로 표시된다. JSON이나 코드블록으로 쓰지 말고, 보기 좋은 한국어 제목·표·목록으로 완성된 최종 보고서만 답해라. "
-설명용 서문이나 API 관련 말은 붙이지 마라.""",
+                "prompt": "",  # filled with the input-bound final contract below
             },
         ]
     )
+    # Bind every turn (including generic comparison prompts) to the exact frozen
+    # input. This prevents resume from mixing matching generic prompts across runs.
+    header = (
+        f"계약 {CONTRACT_VERSION}; 입력 ID {package.get('input_id', '미지정')}; "
+        f"입력 기준 시각 {package.get('input_as_of', '미지정')}. "
+        "일봉 피처·거래량 비교는 완료 일봉만 사용한다. 장중 관측은 별도 참고이며 종가가 아니다. "
+        "입력 기준 시각 이후 사실을 당시 정보처럼 사용하지 마라.\n"
+    )
+    turns[-1]["prompt"] = (
+        "앞선 분석을 종합해 최종 추천을 JSON 스키마로 제출하라. 별도 최종 설명문을 쓰지 마라. "
+        "모든 후보 instrument_id를 정확히 한 번씩 포함하고 rank는 최종 추천 우선순위로 1부터 중복 없이 부여하라. "
+        "recommended_units는 변경량이 아닌 최종 목표 단위다. "
+        "BUY/ENTER/ADD는 현재보다 큰 목표, SELL/REDUCE는 현재보다 작은 목표, EXIT는 0이다. "
+        "WATCH/NO_ACTION/HOLD는 보유 상태를 바꾸지 않는다: 목표는 null 또는 현재 단위다. "
+        "신규 종목 관망은 0이며 기존 보유 관망은 매도가 아니다. "
+        "현재단위가 null이고 position_held가 true인 평가 불가 보유 종목은 WATCH/HOLD와 null 목표만 허용된다. "
+        "thesis에는 근거를, contrary_evidence에는 반대 근거를, change_conditions에는 변경 조건을 써라. "
+        "근거 문장에 별도의 배분·순위·실행 지시를 중복 작성하지 마라. "
+        "input_id와 input_as_of는 아래 값을 그대로 반환하라.\n"
+        + json.dumps({"input_id": package.get("input_id"), "input_as_of": package.get("input_as_of"),
+                      "portfolio": package.get("portfolio"),
+                      "candidates": [{"instrument_id": c.get("instrument_id"),
+                                      "current_units": (c.get("quant") or {}).get("current_units", 0)}
+                                     for c in candidates]}, ensure_ascii=False)
+    )
+    for turn in turns:
+        turn["prompt"] = header + str(turn["prompt"])
     return turns
 
 
@@ -508,7 +517,7 @@ def legacy_b_raw_conversation(
     conn: Any = None,
     enforce_llm_budget: bool = False,
 ) -> dict[str, Any]:
-    """Run legacy-b's multi-turn GPT workflow and return the final prose untouched.
+    """Run the existing multi-turn workflow and validate its final structured output.
 
     conn (optional): when given, a retried conversation first checks for a recent
     attempt's already-succeeded turns (see _load_resumable_turns) and resumes
@@ -540,6 +549,11 @@ def legacy_b_raw_conversation(
 
     api_key = str(settings.openai_api_key)
     reused_turns = _load_resumable_turns(conn, turns)
+    if reused_turns and reused_turns[-1]["stage"] == "final_execution":
+        try:
+            parse_final_judgment(reused_turns[-1]["response"], package)
+        except ValueError:
+            reused_turns.pop()  # retry an invalid final, retain the paid research prefix
     resume_from = len(reused_turns)
     previous_response_id: str | None = None
     completed: list[dict[str, Any]] = list(reused_turns)
@@ -599,6 +613,11 @@ def legacy_b_raw_conversation(
                 "store": True,
                 "text": {"format": {"type": "text"}, "verbosity": "high"},
             }
+            if turn["stage"] == "final_execution":
+                payload["text"]["format"] = {
+                    "type": "json_schema", "name": CONTRACT_VERSION,
+                    "schema": FinalJudgment.model_json_schema(), "strict": True,
+                }
             if previous_response_id and not resume_boundary:
                 payload["previous_response_id"] = previous_response_id
             if bool(turn.get("use_search")):
@@ -649,6 +668,8 @@ def legacy_b_raw_conversation(
             )
         body = result.value
         text = _output_text(body).strip()
+        if body.get("status") in {"incomplete", "failed", "cancelled"}:
+            text = ""
         if not text:
             return _with_exchange(
                 {
@@ -690,11 +711,20 @@ def legacy_b_raw_conversation(
             }
         )
 
+    validation_error = None
+    structured = None
+    try:
+        structured = parse_final_judgment(final_text, package).model_dump(mode="json")
+    except ValueError as exc:
+        validation_error = str(exc)
     return _with_exchange(
         {
-            "status": STATUS_AVAILABLE,
+            "status": "INVALID_OUTPUT" if validation_error else STATUS_AVAILABLE,
             "prompt_version": LEGACY_B_RAW_PROMPT_VERSION,
-            "final_text": final_text,
+            "final_text": "",
+            "raw_final_text": final_text,
+            "structured_final": structured,
+            "error": validation_error,
             "turns": completed,
             "response_id": previous_response_id,
         },

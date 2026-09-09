@@ -49,7 +49,7 @@ def test_reasoning_model_detects_sol() -> None:
     assert not _reasoning_model("gpt-4o")
 
 
-def test_legacy_b_turns_omit_json_and_end_in_plain_final_report() -> None:
+def test_analysis_turns_keep_prose_but_final_requires_structured_decision() -> None:
     turns = build_legacy_b_raw_turns(
         {
             "portfolio": {"total_base_units": 1000, "cash_units": 300},
@@ -72,7 +72,8 @@ def test_legacy_b_turns_omit_json_and_end_in_plain_final_report() -> None:
         "final_execution",
     ]
     assert not any("JSON 형식으로만" in str(turn["prompt"]) for turn in turns)
-    assert "JSON이나 코드블록으로 쓰지 말고" in str(turns[-1]["prompt"])
+    assert "최종 추천을 JSON 스키마" in str(turns[-1]["prompt"])
+    assert "WATCH/NO_ACTION/HOLD는 보유 상태를 바꾸지 않는다" in str(turns[-1]["prompt"])
 
 
 def test_legacy_b_analysis_part_defers_ranking_to_final_stage() -> None:
@@ -96,6 +97,10 @@ def test_legacy_b_raw_conversation_keeps_response_chain_and_returns_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payloads: list[dict] = []
+    final = {"input_id": "test_input", "input_as_of": "2026-09-04T14:00:00+00:00", "recommendations": [
+        {"instrument_id": "inst_aapl", "action": "BUY", "recommended_units": 100, "rank": 1,
+         "thesis": "검증할 근거", "contrary_evidence": "반대 근거", "change_conditions": "가이던스 변경"}
+    ]}
 
     class FakeClient:
         def __init__(self, *a, **k):
@@ -110,7 +115,7 @@ def test_legacy_b_raw_conversation_keeps_response_chain_and_returns_text(
         def post(self, url, headers=None, json=None):
             payloads.append(dict(json or {}))
             n = len(payloads)
-            text = "최종 보고서 원문" if n == 6 else f"중간 답변 {n}"
+            text = json_module.dumps(final, ensure_ascii=False) if n == 6 else f"중간 답변 {n}"
             return _response(
                 200,
                 url,
@@ -121,10 +126,12 @@ def test_legacy_b_raw_conversation_keeps_response_chain_and_returns_text(
                 },
             )
 
+    json_module = json
     monkeypatch.setattr("trading_system.openai_judge.httpx.Client", FakeClient)
     out = legacy_b_raw_conversation(
         _settings(),
         {
+            "input_id": final["input_id"], "input_as_of": final["input_as_of"],
             "portfolio": {"total_base_units": 1000, "cash_units": 300},
             "candidates": [
                 {
@@ -138,12 +145,14 @@ def test_legacy_b_raw_conversation_keeps_response_chain_and_returns_text(
         },
     )
     assert out["status"] == STATUS_AVAILABLE
-    assert out["final_text"] == "최종 보고서 원문"
+    assert out["final_text"] == ""
+    assert out["structured_final"] == final
     assert len(payloads) == 6
     assert "previous_response_id" not in payloads[0]
     assert payloads[1]["previous_response_id"] == "resp_1"
-    assert all(p["text"]["format"] == {"type": "text"} for p in payloads)
-    assert all("json_schema" not in json.dumps(p) for p in payloads)
+    assert all(p["text"]["format"] == {"type": "text"} for p in payloads[:-1])
+    assert payloads[-1]["text"]["format"]["type"] == "json_schema"
+    assert payloads[-1]["text"]["format"]["strict"] is True
 
 
 def test_candidate_line_quotes_real_sec_filing_when_available() -> None:

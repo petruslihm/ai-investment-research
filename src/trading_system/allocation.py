@@ -272,7 +272,11 @@ def research_sizing_multiplier(pack: dict[str, object] | None) -> float:
     bullish = sum(components) / len(components)  # 0..100, 50 = neutral
     bearish = _get("bearish_severity_score") or 0.0
 
-    tilt = ((bullish - 50.0) / 50.0) * (quality / 100.0) * (1.0 - bearish / 100.0)
+    # Bearish evidence may attenuate a positive tilt, never erase a negative one.
+    # Preserve neutral=1 and the existing [0.75, 1.25] sizing scale.
+    tilt = ((bullish - 50.0) / 50.0) * (quality / 100.0)
+    if tilt > 0:
+        tilt *= 1.0 - bearish / 100.0
     half_range = _RESEARCH_SIZING_MAX - 1.0
     raw = 1.0 + tilt * half_range
     return max(_RESEARCH_SIZING_MIN, min(_RESEARCH_SIZING_MAX, raw))
@@ -1596,6 +1600,6 @@ def persist_allocation(conn, payload: dict) -> str:
         INSERT INTO allocation_snapshots (snapshot_id, created_at, formula_version, payload_json)
         VALUES (?, ?, ?, ?)
         """,
-        [sid, datetime.now(timezone.utc), FORMULA_VERSION, json.dumps(payload)],
+        [sid, datetime.now(timezone.utc), str(payload.get("formula_version") or FORMULA_VERSION), json.dumps(payload)],
     )
     return sid

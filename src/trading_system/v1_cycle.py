@@ -8,6 +8,7 @@ successful stub extract or fake-bullish LLM judge.
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import math
 from datetime import date, datetime, timezone
@@ -53,6 +54,10 @@ from trading_system.llm_client import (
 )
 from trading_system.market.registry import bootstrap_smoke_universe, stable_instrument_id
 from trading_system.market.calendar import equity_session_date
+from trading_system.market.decision_data import DAILY_BASIS, content_id, daily_input_fingerprints, latest_price_snapshot
+from trading_system.final_decision import CONTRACT_VERSION, apply_final_judgment, allocation_for_records, render_final_report
+from trading_system.final_decision import prepare_pending
+from trading_system.recommendations import RecommendationAction, RecommendationRecord, RecommendationSource, normalize_position
 from trading_system.universe import ResolvedUniverse
 from trading_system.market.service import MarketDataService
 from trading_system.ml_engine import (
@@ -135,12 +140,12 @@ def llm_progress_message(stage: str, index: int, total: int, instrument_id: obje
 
 
 def _latest_as_of(conn) -> date | None:
-    row = conn.execute("SELECT max(session_date) FROM equity_daily_bars").fetchone()
+    row = conn.execute("SELECT max(session_date) FROM equity_daily_bars WHERE finality='final'").fetchone()
     return row[0] if row and row[0] else None
 
 
 def _latest_btc_as_of(conn) -> date | None:
-    row = conn.execute("SELECT max(session_date) FROM btc_daily_bars").fetchone()
+    row = conn.execute("SELECT max(session_date) FROM btc_daily_bars WHERE finality='final'").fetchone()
     return row[0] if row and row[0] else None
 
 
@@ -296,14 +301,20 @@ def _annotate_units(
             "acquisition_units": acq,
             "marked_units_final": marked,
             "marked_units_intraday_preview": preview,
+            "position_held": bool((acq or 0) > 1e-12 or (rec.current_units or 0) > 1e-12),
+            "valuation_status": "UNAVAILABLE" if degrade else ("FINAL" if marked is not None or (rec.current_units or 0) > 1e-12 else "NOT_HELD"),
             "units_basis": "final_close",
         }
         if degrade:
             update["current_units"] = None
+            update["recommended_units"] = None
             update["delta_units"] = None
             update["actionable"] = False
             update["marked_units_final"] = None
-        out.append(rec.model_copy(update=update))
+            update["action"] = RecommendationAction.HOLD
+            update["exclusion_reason"] = "UNPRICED_HOLDING"
+            update["allocation_note"] = "확정 평가가격이 없어 보유 상태만 유지하며 목표 배분은 미확정입니다."
+        out.append(RecommendationRecord.model_validate(normalize_position({**rec.model_dump(), **update})))
     return out
 
 
@@ -956,6 +967,10 @@ def run_v1_cycle(
         btc_state.liquidity = BtcLiquidityState(str(row[1]))
 
     stock_marked, stock_acq, stock_preview, unpriced = stock_exposure_for_allocation(portfolio.positions)
+    unpriced_all = [
+        str(p.instrument_id) for p in portfolio.positions
+        if float(p.acquisition_units_total or 0) > 1e-12 and not p.price_available
+    ]
     btc_pos = next((p for p in portfolio.positions if "btc" in str(p.instrument_id).lower()), None)
     if btc_pos is not None and btc_pos.marked_units_final is not None:
         btc_state.current_units = btc_pos.marked_units_final
@@ -994,7 +1009,7 @@ def run_v1_cycle(
             stock_acq=stock_acq,
             stock_marked=stock_marked,
             stock_preview=stock_preview,
-            unpriced=unpriced,
+            unpriced=unpriced_all,
             btc_pos=btc_pos,
         )
         if tech_factors_by_inst:
@@ -1051,9 +1066,12 @@ def run_v1_cycle(
             if (btc_pos is not None and btc_pos.marked_units_final is None)
             else float(btc_state.current_units or 0.0)
         )
-        cash_units_ = max(0.0, float(portfolio.total_base_units) - sum(stock_marked.values()) - btc_for_cash_)
+        cash_units_ = (
+            max(0.0, float(portfolio.total_base_units) - sum(stock_marked.values()) - btc_for_cash_)
+            if portfolio.actionable_for_recommendations() else None
+        )
         quant_targets_ = {
-            str(r.instrument_id): float(r.recommended_units or 0.0)
+            str(r.instrument_id): r.recommended_units
             for r in current_alloc["recommendations"]
             if "btc" not in str(r.instrument_id).lower()
         }
@@ -1075,6 +1093,23 @@ def run_v1_cycle(
     # (current/recommended units, confidence, thesis) to build its prompt, so it can
     # only run after at least one allocation pass exists.
     alloc = _run_allocation()
+    quant_alloc = copy.deepcopy(alloc)
+    input_as_of = datetime.now(timezone.utc)
+    input_id = f"input_{uuid4().hex}"
+    prices = {str(r.instrument_id): latest_price_snapshot(conn, str(r.instrument_id), as_of=input_as_of)
+              for r in alloc["recommendations"]}
+    daily_inputs = daily_input_fingerprints(conn, equity_end=last, btc_end=last_btc)
+    resume_inputs = {
+        "daily": daily_inputs,
+        "prices": {k: {a: b for a, b in p.items() if a not in {"received_at", "input_as_of"}} for k, p in prices.items()},
+        "holdings": stock_marked, "acquisition": stock_acq, "unpriced": unpriced_all,
+        "btc": {"current_units": btc_state.current_units, "liquidity": str(btc_state.liquidity)}, "base": portfolio.total_base_units,
+        "policy": {k: getattr(settings, k) for k in (
+            "min_cash_weight", "max_single_stock_weight", "max_total_stock_weight", "max_btc_weight",
+            "min_actionable_units_floor", "min_actionable_weight", "min_delta_weight", "display_unit_step_weight")},
+        "judge_model": resolve_judge_model(settings), "contract": CONTRACT_VERSION,
+    }
+    resume_guard = content_id(resume_inputs)
     _, portfolio_ctx = _derive_context(alloc)
 
     stock_weights = alloc["payload"].get("stock_weights") or {}
@@ -1092,8 +1127,20 @@ def run_v1_cycle(
     # re-derived candidate set (and therefore its GPT prompts) can otherwise
     # drift turn to turn.
     pending_package = load_pending_package(artifacts_dir)
+    resume_issue = None
+    rejected_input_id = None
+    if pending_package:
+        try:
+            pending_package = prepare_pending(pending_package, resume_guard=resume_guard)
+        except ValueError as exc:
+            resume_issue = str(exc)
+            rejected_input_id = pending_package.get("input_id")
+            pending_package = None
 
-    if pending_package is None:
+    if resume_issue:
+        sec_pack = {"sec_status": STATUS_DEGRADED, "extract_status": STATUS_DEGRADED,
+                    "llm_configured": False, "filings": [], "errors": [resume_issue], "used_lkg": False}
+    elif pending_package is None:
         _emit(conn, RuntimeEventKind.SEC_INGEST, RuntimeEventStatus.STARTED, "EDGAR 8-K/10-Q ingest")
         try:
             sec_pack = ingest_sec_extracts(
@@ -1159,7 +1206,7 @@ def run_v1_cycle(
     # budget for zero effect. The resulting pack feeds a second allocate() pass below
     # so the effect is real sizing, not just a GPT-prompt footnote.
     stock_research: dict[str, dict] = {}
-    if pending_package is None:
+    if pending_package is None and not resume_issue:
         for inst in conversation_ids:
             if inst in held_ids or "btc" in inst.lower():
                 continue
@@ -1175,7 +1222,8 @@ def run_v1_cycle(
                     conn=conn,
                     tick_id=str(tick_id),
                     portfolio=portfolio_ctx,
-                    last_price=_last_close(conn, inst),
+                    last_price=(prices.get(inst) or {}).get("price"),
+                    price_snapshot=prices.get(inst),
                     enforce_llm_budget=enforce_llm_budget,
                 )
             except Exception:  # noqa: BLE001 -- one name's research must never abort the scan
@@ -1195,14 +1243,63 @@ def run_v1_cycle(
         by_id = {str(r.instrument_id): r for r in candidates}
 
     cash_units, portfolio_ctx = _derive_context(alloc)
-    market_actionable = bool(_alpaca_configured(settings) and not used_synthetic)
+    market_actionable = bool(
+        _alpaca_configured(settings)
+        and not used_synthetic
+        and portfolio.actionable_for_recommendations()
+        and not resume_issue
+    )
     alloc["payload"]["actionable"] = market_actionable
     alloc["payload"]["market_data_basis"] = provider_label
     if not market_actionable:
         alloc["recommendations"] = [
             r.model_copy(update={"actionable": False}) for r in alloc["recommendations"]
         ]
-    persist_allocation(conn, alloc["payload"])
+    if pending_package is not None:
+        # A new attempt keeps the original input/epoch and all three stage inputs;
+        # only the attempt tick and record IDs change. No historical tick is updated.
+        frozen = pending_package["stages"]
+        quant_alloc = {"payload": copy.deepcopy(frozen["quant_allocation"]),
+                       "recommendations": [RecommendationRecord.model_validate(r) for r in frozen["quant"]]}
+        alloc = {"payload": copy.deepcopy(frozen["research_allocation"]),
+                 "recommendations": [RecommendationRecord.model_validate(r) for r in frozen["research_adjusted"]]}
+        input_id = pending_package["input_id"]
+        input_as_of = datetime.fromisoformat(pending_package["input_as_of"])
+        prices = pending_package["prices"]
+        portfolio_ctx = pending_package["portfolio"]
+    baseline_ids = {}
+    for rec in quant_alloc["recommendations"]:
+        rec.recommendation_id = f"rec_{uuid4().hex}"
+        rec.tick_id = tick_id
+        rec.input_id, rec.input_as_of = input_id, input_as_of
+        rec.price_snapshot = prices.get(str(rec.instrument_id))
+        rec.actionable = bool(rec.actionable and market_actionable)
+        baseline_ids[str(rec.instrument_id)] = rec.recommendation_id
+    for rec in alloc["recommendations"]:
+        rec.recommendation_id = f"rec_{uuid4().hex}"
+        rec.tick_id = tick_id
+        rec.source = RecommendationSource.RESEARCH_ADJUSTED
+        rec.llm_tainted = True
+        rec.input_id, rec.input_as_of = input_id, input_as_of
+        rec.price_snapshot = prices.get(str(rec.instrument_id))
+        rec.override_of_recommendation_id = baseline_ids.get(str(rec.instrument_id))
+        rec.previous_stage_recommendation_id = baseline_ids.get(str(rec.instrument_id))
+        rec.decision_status = "RESEARCH_ADJUSTED"
+        rec.actionable = bool(rec.actionable and market_actionable)
+    if unpriced_all:
+        # The unknown exposure cannot be treated as cash or available capacity.
+        # Candidate research may continue, but portfolio weights remain explicitly
+        # unconfirmed and every recommendation remains non-actionable.
+        for stage in (quant_alloc, alloc):
+            stage["payload"].update({
+                "stock_weights": {}, "btc_weight": None, "cash_weight": None,
+                "equity_budget_used": None, "actionable": False,
+                "weights_confirmed": False, "allocation_status": "INCOMPLETE_VALUATION",
+                "unpriced_holdings": sorted(unpriced_all),
+                "known_stock_units": dict(stock_marked),
+            })
+    by_id = {str(r.instrument_id): r for r in alloc["recommendations"]}
+    research_allocation = copy.deepcopy(alloc["payload"])
     record_matured_outcomes(
         conn,
         last_equity=last,
@@ -1212,18 +1309,20 @@ def run_v1_cycle(
         adjustment_revision=adjustment_revision,
     )
 
-    dq_level = "ok" if market_actionable else "not_configured"
+    dq_level = "ok" if market_actionable else (
+        "incomplete_valuation" if unpriced_all else "not_configured"
+    )
     quant_status = (
         STATUS_AVAILABLE
         if market_actionable and alloc["recommendations"]
+        else STATUS_DEGRADED
+        if unpriced_all and _alpaca_configured(settings) and not used_synthetic
         else STATUS_NOT_CONFIGURED
         if not _alpaca_configured(settings)
         else STATUS_UNAVAILABLE
     )
-    # legacy-b did not run Gemini research, a separate adversarial pass, per-name
-    # structured GPT calls, and then a synthetic committee.  It pasted candidate
-    # batches and follow-up questions into one continuing GPT conversation.  Keep
-    # Quant recommendations separate and expose the final GPT prose verbatim.
+    # Keep the existing multi-turn research; only its final turn becomes a validated
+    # recommendation contract. Quant and research-stage records remain separate.
     llm_recs: list = []
     packs: dict[str, dict] = {}
     conversation_candidates: list[dict[str, object]] = []
@@ -1241,7 +1340,8 @@ def run_v1_cycle(
                 "instrument_id": inst,
                 "ticker": ticker_from_instrument(inst),
                 "held": inst in held_ids or float(rec.current_units or 0) > 1e-12,
-                "last_price": _last_close(conn, inst),
+                "last_price": (prices.get(inst) or {}).get("price"),
+                "price_snapshot": prices.get(inst),
                 "rank_score": sum(rank_values) / len(rank_values) if rank_values else None,
                 "quant": rec.model_dump(mode="json"),
                 "sec_filing": evidence_for_instrument(sec_pack.get("filings") or [], inst),
@@ -1263,11 +1363,31 @@ def run_v1_cycle(
         committee_candidates = pending_package.get("candidates") or []
     else:
         conversation_package = {
+            "contract_version": CONTRACT_VERSION,
+            "input_id": input_id,
+            "input_as_of": input_as_of.isoformat(),
+            "resume_guard": resume_guard,
+            "daily_feature_basis": DAILY_BASIS,
+            "daily_inputs": daily_inputs,
+            "prices": prices,
             "portfolio": portfolio_ctx,
             "candidates": conversation_candidates,
+            "stages": {
+                "quant": [r.model_dump(mode="json") for r in quant_alloc["recommendations"]],
+                "research_adjusted": [r.model_dump(mode="json") for r in alloc["recommendations"]],
+                "quant_allocation": quant_alloc["payload"],
+                "research_allocation": research_allocation,
+            },
+            "features": [list(r) for r in conn.execute(
+                "SELECT instrument_id, CAST(as_of_date AS VARCHAR), horizon, features_json FROM feature_rows "
+                "WHERE (asset_class='us_equity' AND as_of_date=?) OR (asset_class='btc' AND as_of_date=?)", [last, last_btc]
+            ).fetchall()],
         }
         committee_candidates = conversation_candidates
-    if committee_candidates:
+    if resume_issue:
+        portfolio_committee = {"status": "REEVALUATION_REQUIRED", "error": resume_issue,
+                               "rejected_input_id": rejected_input_id}
+    elif committee_candidates:
         if pending_package is None:
             save_pending_package(artifacts_dir, conversation_package)
         # One turn's worth, not the whole conversation: legacy_b_raw_conversation
@@ -1300,8 +1420,6 @@ def run_v1_cycle(
                 conn=conn,
                 enforce_llm_budget=enforce_llm_budget,
             )
-            if str(portfolio_committee.get("status") or "") == STATUS_AVAILABLE:
-                clear_pending_package(artifacts_dir)
             committee_prompt_n, committee_completion_n = usage_from_payload(portfolio_committee)
             record_usage(
                 conn,
@@ -1331,20 +1449,48 @@ def run_v1_cycle(
                     completion_tokens=turn.get("completion_tokens"),
                     total_tokens=turn.get("total_tokens"),
                 )
-            persist_exchange(
-                conn,
-                portfolio_committee,
-                tick_id=str(tick_id),
-                kind="portfolio_judge",
-                ticker="PORTFOLIO",
-                prompt_version=LEGACY_B_RAW_PROMPT_VERSION,
-                default_system=LEGACY_B_RAW_SYSTEM,
-                default_user="\n\n".join(
-                    str(turn.get("prompt") or "")
-                    for turn in (portfolio_committee.get("turns") or [])
-                    if isinstance(turn, dict)
-                ),
+    effective_recs = list(alloc["recommendations"])
+    portfolio_committee = dict(portfolio_committee)
+    if portfolio_committee.get("status") == STATUS_AVAILABLE:
+        raw_final = str(portfolio_committee.get("raw_final_text") or "")
+        if not raw_final and portfolio_committee.get("structured_final"):
+            raw_final = json.dumps(portfolio_committee["structured_final"], ensure_ascii=False)
+        raw_final = raw_final or str(portfolio_committee.get("final_text") or "")
+        try:
+            llm_recs, effective_recs = apply_final_judgment(
+                raw_final, conversation_package, alloc["recommendations"], settings=settings, btc_state=btc_state
             )
+        except (ValueError, KeyError, TypeError) as exc:
+            portfolio_committee.update(status="INVALID_OUTPUT", error=str(exc), raw_final_text=raw_final)
+        else:
+            alloc["payload"] = allocation_for_records(effective_recs, research_allocation)
+            portfolio_committee.update(
+                validated=True, contract_version=CONTRACT_VERSION, raw_final_text=raw_final,
+                final_text=render_final_report(llm_recs, settings=settings, allocation=alloc["payload"], input_as_of=input_as_of.isoformat()),
+            )
+            clear_pending_package(artifacts_dir)
+    if not portfolio_committee.get("validated"):
+        portfolio_committee.update(
+            final_text="", validated=False,
+            fallback="research_adjusted",
+            note="GPT 최종 판단 미적용. Gemini 반영 수치 결과를 대체 표시합니다. 중간 답변·이전 실행 판단은 적용하지 않습니다.",
+        )
+        effective_recs = [r.model_copy(update={"decision_status": "FALLBACK_RESEARCH_ADJUSTED"}) for r in alloc["recommendations"]]
+        if resume_issue:
+            portfolio_committee["note"] = "이전 입력의 보유 상태를 복원할 수 없어 재평가가 필요합니다. 대체 결과는 실행 불가입니다."
+            effective_recs = [r.model_copy(update={"actionable": False, "decision_status": "REEVALUATION_REQUIRED"}) for r in effective_recs]
+            alloc["payload"].update(actionable=False, weights_confirmed=False,
+                                     allocation_status="REEVALUATION_REQUIRED", stock_weights={}, btc_weight=None, cash_weight=None)
+    # Raw turn transcripts remain separate from the applied, validated result.
+    # Persist the canonical committee payload (including any explicit fallback).
+    if isinstance(portfolio_committee.get("_exchange"), dict):
+        portfolio_committee["_exchange"]["raw_response"] = None
+    persist_exchange(
+        conn, portfolio_committee, tick_id=str(tick_id), kind="portfolio_judge", ticker="PORTFOLIO",
+        prompt_version=LEGACY_B_RAW_PROMPT_VERSION, default_system=LEGACY_B_RAW_SYSTEM,
+        default_user="\n\n".join(str(t.get("prompt") or "") for t in portfolio_committee.get("turns", [])),
+    )
+    persist_allocation(conn, alloc["payload"])
     llm_judge_status = str(portfolio_committee.get("status") or STATUS_UNAVAILABLE)
     if llm_judge_status == "NOT_RUN":
         llm_judge_status = STATUS_NOT_CONFIGURED if not openai_configured(settings) else STATUS_UNAVAILABLE
@@ -1371,7 +1517,7 @@ def run_v1_cycle(
 
     alerts = []
     if market_actionable:
-        for rec in alloc["recommendations"][:3]:
+        for rec in effective_recs[:3]:
             agr, _ = horizon_agreement({h.horizon: h.expected_return or 0.0 for h in rec.horizons})
             px = _last_close(conn, str(rec.instrument_id))
             if px is None:
@@ -1393,7 +1539,7 @@ def run_v1_cycle(
     ).fetchone()
     alerts.extend(
         collect_cycle_notifications(
-            recommendations=list(alloc["recommendations"]),
+            recommendations=list(effective_recs),
             tick_id=str(tick_id),
             data_status=market_status,
             llm_status=llm_judge_status,
@@ -1427,8 +1573,23 @@ def run_v1_cycle(
     except Exception:  # noqa: BLE001 — Kakao must never abort a scan
         pass
 
+    decision_snapshot = {
+        "tick_id": str(tick_id), "input_id": input_id, "input_as_of": input_as_of.isoformat(),
+        "decision_contract": CONTRACT_VERSION, "daily_feature_basis": DAILY_BASIS,
+        "allocation": alloc["payload"],
+        "quant": [r.model_dump(mode="json") for r in quant_alloc["recommendations"]],
+        "research_adjusted": [r.model_dump(mode="json") for r in alloc["recommendations"]],
+        "llm_final": [r.model_dump(mode="json") for r in llm_recs],
+        "effective": [r.model_dump(mode="json") for r in effective_recs],
+        "llm_judge_status": llm_judge_status, "quant_status": quant_status,
+        "portfolio_committee": {k: v for k, v in portfolio_committee.items() if k != "_exchange"},
+        "capabilities": {"quant": quant_status, "llm_final_judge": llm_judge_status, "market_data": market_status,
+                         "sec": sec_pack["sec_status"], "llm_extract": sec_pack["extract_status"]},
+        "portfolio": portfolio.model_dump(mode="json"), "no_trading": True,
+        "used_synthetic_market": used_synthetic,
+    }
     rec_payloads = []
-    for r in alloc["recommendations"] + llm_recs:
+    for r in quant_alloc["recommendations"] + alloc["recommendations"] + llm_recs:
         rec_payloads.append(
             {
                 "recommendation_id": r.recommendation_id,
@@ -1443,9 +1604,14 @@ def run_v1_cycle(
         conn,
         TickCommitPayload(
             tick_id=tick_id,
-            decision_epoch_id=str(epoch.decision_epoch_id),
-            feature_snapshot_id=str(fs_id),
-            observations=[{"instrument_id": "cycle", "note": "v1_cycle"}],
+            decision_epoch_id=str(quant_alloc["recommendations"][0].decision_epoch_id) if quant_alloc["recommendations"] else str(epoch.decision_epoch_id),
+            feature_snapshot_id=str(quant_alloc["recommendations"][0].feature_snapshot_id) if quant_alloc["recommendations"] else str(fs_id),
+            observations=[{"instrument_id": "cycle", "note": "v1_cycle"}, {
+                "instrument_id": "decision_comparison_v1", "input": conversation_package,
+                "snapshot": decision_snapshot,
+                "allocations": {"quant_only": quant_alloc["payload"], "research_adjusted": research_allocation,
+                                "effective": alloc["payload"]},
+            }],
             predictions=[{"instrument_id": "cycle", "n_bundles": len(bundles)}],
             recommendations=rec_payloads,
             watermarks=[{"watermark_key": "cycle", "instrument_id": None, "value": last.isoformat()}],
@@ -1517,11 +1683,12 @@ def run_v1_cycle(
         "portfolio": portfolio.model_dump(mode="json"),
         "historical_vs_live": {
             "historical": "walk-forward diagnostics only",
-            "live": "raw GPT conversation stored without hidden JSON parsing",
+            "live": "versioned quant/research/validated final decisions with frozen input provenance",
         },
         "survivorship_warning": "Smoke universe is not the full S&P-500; survivorship bias possible.",
         "no_trading": True,
         "used_synthetic_market": used_synthetic,
+        **decision_snapshot,
     }
 
 
@@ -1533,6 +1700,13 @@ def load_last_ui_snapshot(conn) -> dict | None:
     if not row:
         return None
     tick_id = row[0]
+    comparison = conn.execute(
+        "SELECT payload_json FROM tick_observations WHERE tick_id=? AND instrument_id='decision_comparison_v1'", [tick_id]
+    ).fetchone()
+    if comparison:
+        # The atomic tick snapshot owns the displayed result. Never combine a newer
+        # allocation or retried transcript with an older committed recommendation.
+        return json.loads(comparison[0])["snapshot"]
     rec_rows = conn.execute(
         "SELECT source, payload_json FROM tick_recommendations WHERE tick_id = ?",
         [tick_id],
@@ -1551,6 +1725,8 @@ def load_last_ui_snapshot(conn) -> dict | None:
         if not isinstance(rec, dict):
             continue
         src = str(source or rec.get("source") or "")
+        if src == "research_adjusted":
+            continue
         if "llm" in src.lower():
             llm.append(rec)
         else:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
+import math
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -13,6 +14,7 @@ from trading_system.ids import DecisionEpochId, FeatureSnapshotId, InstrumentId,
 
 class RecommendationSource(StrEnum):
     QUANT_ONLY = "quant_only"
+    RESEARCH_ADJUSTED = "research_adjusted"
     LLM_FINAL = "llm_final"
 
 
@@ -25,6 +27,50 @@ class RecommendationAction(StrEnum):
     EXIT = "EXIT"
     BUY = "BUY"
     SELL = "SELL"
+
+
+def normalize_position(data: dict) -> dict:
+    """Interpret v1/v2 unit records without treating acquisition units as a mark.
+
+    In v1 acquisition_units is the sum of lot acquisition units, not shares or
+    current value. A positive sum proves ownership only. Missing evidence or
+    contradictory fields requires re-evaluation, never an assumed empty position.
+    Returns a new mapping; historical JSON is never mutated.
+    """
+    out = dict(data)
+    values = {}
+    for key in ("current_units", "acquisition_units", "marked_units_final"):
+        value = data.get(key)
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or value < 0:
+                raise ValueError("REEVALUATION_REQUIRED:INVALID_POSITION_UNITS")
+        values[key] = value
+    current, acquisition = values["current_units"], values["acquisition_units"]
+    explicit = data.get("position_held")
+    if explicit is not None and not isinstance(explicit, bool):
+        raise ValueError("REEVALUATION_REQUIRED:INVALID_POSITION_HELD")
+    positive = any(v is not None and v > 1e-12 for v in values.values())
+    if explicit is False and positive:
+        raise ValueError("REEVALUATION_REQUIRED:CONFLICTING_POSITION")
+    held = explicit if explicit is not None else (True if positive else False if current == 0 or acquisition == 0 else None)
+    if held is None:
+        raise ValueError("REEVALUATION_REQUIRED:UNKNOWN_POSITION")
+    if not held:
+        out.update(position_held=False, current_units=0.0, valuation_status="NOT_HELD")
+        return out
+    if data.get("valuation_status") == "NOT_HELD":
+        raise ValueError("REEVALUATION_REQUIRED:CONFLICTING_POSITION")
+    if current is None:
+        if values["marked_units_final"] is not None or data.get("valuation_status") == "FINAL":
+            raise ValueError("REEVALUATION_REQUIRED:CONFLICTING_VALUATION")
+        out.update(position_held=True, valuation_status="UNAVAILABLE", current_units=None,
+                   recommended_units=None, delta_units=None, requested_units=None,
+                   constrained_units=None, actionable=False, action="HOLD")
+    else:
+        if data.get("valuation_status") == "UNAVAILABLE":
+            raise ValueError("REEVALUATION_REQUIRED:CONFLICTING_VALUATION")
+        out.update(position_held=True, valuation_status="FINAL")
+    return out
 
 
 class HorizonOutlook(BaseModel):
@@ -60,6 +106,11 @@ class RecommendationRecord(BaseModel):
     acquisition_units: float | None = None
     marked_units_final: float | None = None
     marked_units_intraday_preview: float | None = None
+    # Position existence and valuation availability are separate. In particular,
+    # an owned name whose FINAL-close mark is unavailable must never become a
+    # zero-unit non-holding merely because current_units is None.
+    position_held: bool | None = None
+    valuation_status: str | None = None
     requested_units: float | None = None
     constrained_units: float | None = None
     units_basis: str | None = None
@@ -92,6 +143,15 @@ class RecommendationRecord(BaseModel):
     research_cash_relative_score: float | None = None
     research_data_quality_score: float | None = None
     research_sizing_multiplier: float | None = None
+    # Additive JSON fields: old persisted records remain readable and unmodified.
+    input_id: str | None = None
+    input_as_of: datetime | None = None
+    price_snapshot: dict | None = None
+    final_rank: int | None = None
+    decision_status: str | None = None
+    requested_action: str | None = None
+    change_conditions: str | None = None
+    previous_stage_recommendation_id: str | None = None
 
 
 def quant_only_record(

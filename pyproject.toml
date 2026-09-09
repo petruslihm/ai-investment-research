@@ -29,7 +29,7 @@ dev = [
 ]
 
 [project.scripts]
-investassist = "trading_system.ui.app:main"
+investassist = "trading_system.cli:main"
 
 [build-system]
 requires = ["hatchling"]

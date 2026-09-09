@@ -11,7 +11,7 @@ from typing import Any
 
 from trading_system.btc_sleeve import BtcSleeveState
 from trading_system.config import Settings
-from trading_system.recommendations import RecommendationRecord
+from trading_system.recommendations import RecommendationRecord, normalize_position
 
 
 def _clamp01(v: float) -> float:
@@ -138,6 +138,7 @@ def apply_portfolio_gate(
             continue
         inst = str(rec.instrument_id)
         is_btc = _is_btc(inst)
+        current = float(rec.current_units or 0.0)
         others = sum(v for k, v in book.items() if k != inst)
         constrained, requested, extra = constrain_units(
             instrument_id=inst,
@@ -149,6 +150,15 @@ def apply_portfolio_gate(
             btc_units=btc_u,
             btc_blocked=blocked,
         )
+        if not (is_btc and blocked):
+            if float(rec.recommended_units) <= current:
+                # A HOLD/WATCH must not become a forced reduction just because an
+                # existing position exceeds today's cap. Respect explicit reductions.
+                constrained = float(rec.recommended_units)
+                extra = []
+            else:
+                # Lack of room can block an increase, but cannot turn BUY into SELL.
+                constrained = max(current, constrained)
         merged = list(rec.override_reasons or []) + extra
         cur = rec.current_units
         delta = None if cur is None else constrained - float(cur)
@@ -176,39 +186,48 @@ def build_portfolio_context(
     settings: Settings,
     stock_marked: dict[str, float],
     stock_acquisition: dict[str, float],
-    quant_targets: dict[str, float],
+    quant_targets: dict[str, float | None],
     btc_state: BtcSleeveState,
     unpriced: list[str],
-    cash_units: float,
+    cash_units: float | None,
     allocation_trace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Unit/weight snapshot for the final judge. No account-money amounts."""
     base = max(1e-9, float(total_base_units))
     holdings: list[dict[str, Any]] = []
-    for inst, marked in sorted(stock_marked.items()):
+    for inst in sorted(set(stock_marked) | set(stock_acquisition)):
+        marked = stock_marked.get(inst)
+        acquisition = float(stock_acquisition.get(inst, 0.0) or 0.0)
+        position = normalize_position({"current_units": marked, "acquisition_units": acquisition})
+        marked = position["current_units"]
+        valuation_available = marked is not None
         holdings.append(
             {
                 "instrument_id": inst,
-                "acquisition_units": stock_acquisition.get(inst, 0.0),
+                "position_held": position["position_held"],
+                "acquisition_units": acquisition,
                 "marked_units_final": marked,
                 "quant_recommended_units": quant_targets.get(inst),
-                "weight": marked / base,
+                "valuation_status": position["valuation_status"],
+                "weight": (float(marked) / base) if valuation_available else None,
             }
         )
     btc_w = float(btc_state.current_units or 0.0) / base
     stock_w = sum(stock_marked.values()) / base
-    largest = max(holdings, key=lambda h: float(h["weight"]), default=None)
+    valued = [h for h in holdings if h["weight"] is not None]
+    largest = max(valued, key=lambda h: float(h["weight"]), default=None)
     return {
         "total_base_units": base,
         "cash_units": cash_units,
         "cash_floor_weight": float(settings.min_cash_weight),
         "holdings": holdings,
         "unpriced_holdings": list(unpriced),
+        "valuation_status": "INCOMPLETE" if unpriced else "COMPLETE",
         "concentration": {
             "largest_instrument_id": (largest or {}).get("instrument_id"),
             "largest_weight": (largest or {}).get("weight"),
-            "stock_weight": stock_w,
-            "btc_weight": btc_w,
+            "stock_weight": None if unpriced else stock_w,
+            "btc_weight": None if unpriced else btc_w,
         },
         "btc_sleeve": {
             "liquidity": str(getattr(btc_state.liquidity, "value", btc_state.liquidity)),

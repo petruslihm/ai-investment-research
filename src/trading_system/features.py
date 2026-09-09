@@ -13,6 +13,7 @@ import pandas as pd
 from trading_system.ids import AssetClass
 from trading_system.market.calendar import add_sessions, is_trading_day
 from trading_system.market.registry import stable_instrument_id
+from trading_system.market.decision_data import daily_input_fingerprints
 
 FEATURE_NAMES: tuple[str, ...] = (
     "ret_1",
@@ -34,14 +35,14 @@ def _closes(conn: duckdb.DuckDBPyConnection, table: str, instrument_id: str | No
             """
             SELECT session_date, close, volume
             FROM equity_daily_bars
-            WHERE instrument_id = ?
+            WHERE instrument_id = ? AND finality = 'final'
             ORDER BY session_date
             """,
             [instrument_id],
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT session_date, close, volume FROM btc_daily_bars ORDER BY session_date"
+            "SELECT session_date, close, volume FROM btc_daily_bars WHERE finality = 'final' ORDER BY session_date"
         ).fetchall()
     return [(r[0], float(r[1]), float(r[2])) for r in rows]
 
@@ -239,7 +240,7 @@ def _append_equity_rows(
     index = _idx(series)
     n_added = 0
     for i, (as_of, close_i, _v) in enumerate(series):
-        if i < 20 or not is_trading_day(as_of) or as_of not in spy_map:
+        if i < 20 or as_of > last_available or not is_trading_day(as_of) or as_of not in spy_map:
             continue
         payload = _feat_json_at(cols, i)
         for h in horizons:
@@ -285,7 +286,7 @@ def _append_btc_rows(
     ordinals = np.asarray([d.toordinal() for d, _c, _v in series], dtype=np.int64)
     n_added = 0
     for i, (as_of, close_i, _v) in enumerate(series):
-        if i < 20:
+        if i < 20 or as_of > btc_last:
             continue
         payload = _feat_json_at(cols, i)
         for h in horizons:
@@ -326,7 +327,7 @@ def _load_equity_series(
         f"""
         SELECT instrument_id, session_date, close, volume
         FROM equity_daily_bars
-        WHERE instrument_id IN ({placeholders})
+        WHERE instrument_id IN ({placeholders}) AND finality = 'final'
         ORDER BY instrument_id, session_date
         """,
         instrument_ids,
@@ -343,7 +344,14 @@ def features_cover_latest(
     last_available: date,
     last_available_btc: date | None,
 ) -> bool:
-    """True when PIT rows already reach the latest stored bars (a re-scan can skip rebuild)."""
+    """Coverage AND content identity; same-session corrections must rebuild."""
+    fingerprints = daily_input_fingerprints(
+        conn, equity_end=last_available, btc_end=last_available_btc or last_available
+    )
+    for asset, digest in fingerprints.items():
+        stored = conn.execute("SELECT value FROM schema_meta WHERE key=?", [f"daily_feature_input:{asset}"]).fetchone()
+        if not stored or stored[0] != digest:
+            return False
     eq_latest, eq_names = conn.execute(
         """
         SELECT max(as_of_date), count(DISTINCT instrument_id)
@@ -352,7 +360,7 @@ def features_cover_latest(
     ).fetchone() or (None, 0)
     spy_id = str(stable_instrument_id("SPY"))
     bar_names = conn.execute(
-        "SELECT count(DISTINCT instrument_id) FROM equity_daily_bars WHERE instrument_id <> ?",
+        "SELECT count(DISTINCT instrument_id) FROM equity_daily_bars WHERE instrument_id <> ? AND finality='final'",
         [spy_id],
     ).fetchone()
     n_bars = int(bar_names[0] or 0) if bar_names else 0
@@ -386,9 +394,21 @@ def build_and_persist_features(
     """
     btc_last = last_available_btc
     if btc_last is None:
-        brow = conn.execute("SELECT max(session_date) FROM btc_daily_bars").fetchone()
+        brow = conn.execute("SELECT max(session_date) FROM btc_daily_bars WHERE finality='final'").fetchone()
         btc_last = brow[0] if brow and brow[0] else last_available
     spy_id = stable_instrument_id("SPY")
+    fingerprints = daily_input_fingerprints(conn, equity_end=last_available, btc_end=btc_last)
+    changed = set()
+    for asset, digest in fingerprints.items():
+        stored = conn.execute("SELECT value FROM schema_meta WHERE key=?", [f"daily_feature_input:{asset}"]).fetchone()
+        if not stored or stored[0] != digest:
+            changed.add(asset)
+    # Drop only mutable derived rows past the completed-data boundary. Historical
+    # decision inputs are frozen separately in tick_observations, never rewritten.
+    for asset, end in [("us_equity", last_available), ("btc", btc_last)]:
+        if asset in changed:
+            conn.execute("DELETE FROM feature_rows WHERE asset_class=? AND as_of_date>?", [asset, end])
+            conn.execute("DELETE FROM label_rows WHERE asset_class=? AND as_of_date>?", [asset, end])
     spy = _closes(conn, "equity_daily_bars", spy_id)
     if len(spy) < 25:
         return 0
@@ -410,6 +430,8 @@ def build_and_persist_features(
         last_available=last_available,
         n_horizons=len(horizons),
     )
+    if "us_equity" in changed:
+        covered_eq = set()
     todo = [inst_id for inst_id in equity_ids if inst_id not in covered_eq]
     btc_id = str(stable_instrument_id("BTC/USD"))
     covered_btc = btc_id in _covered_instruments(
@@ -418,6 +440,8 @@ def build_and_persist_features(
         last_available=btc_last,
         n_horizons=len(horizons),
     )
+    if "btc" in changed:
+        covered_btc = False
 
     n = 0
     total = len(equity_ids)
@@ -458,6 +482,8 @@ def build_and_persist_features(
             horizons=horizons,
         )
     _flush()
+    for asset, digest in fingerprints.items():
+        conn.execute("INSERT OR REPLACE INTO schema_meta (key,value) VALUES (?,?)", [f"daily_feature_input:{asset}", digest])
     if callable(progress) and total:
         progress(total, total)
     return n

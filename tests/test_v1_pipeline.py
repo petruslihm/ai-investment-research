@@ -379,7 +379,7 @@ def test_cycle_caps_legacy_b_conversation_to_max_names(
         assert len(judged) == 1
 
 
-def test_cycle_persists_legacy_b_raw_final_answer(
+def test_cycle_preserves_plain_legacy_answer_without_applying_it_as_final(
     store: Store, settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fake_conversation(_settings, package, **_kwargs):
@@ -406,13 +406,14 @@ def test_cycle_persists_legacy_b_raw_final_answer(
         update={"openai_api_key": "sk-test", "llm_final_max_names": 3}
     )
     out = run_v1_cycle(store, live, artifacts_dir=tmp_path / "art_committee")
-    assert out["portfolio_committee"]["status"] == "AVAILABLE"
-    assert out["portfolio_committee"]["final_text"].startswith("# 최종 판단")
+    assert out["portfolio_committee"]["status"] == "INVALID_OUTPUT"
+    assert out["portfolio_committee"]["final_text"] == ""
+    assert out["portfolio_committee"]["raw_final_text"].startswith("# 최종 판단")
     assert out["llm_final"] == []
     restored = load_last_ui_snapshot(store.conn)
     assert restored is not None
-    assert restored["portfolio_committee"]["status"] == "AVAILABLE"
-    assert "현금: 20%" in restored["portfolio_committee"]["final_text"]
+    assert restored["portfolio_committee"]["status"] == "INVALID_OUTPUT"
+    assert "현금: 20%" in restored["portfolio_committee"]["raw_final_text"]
 
 
 def test_cycle_researches_only_new_entries_and_moves_real_sizing(

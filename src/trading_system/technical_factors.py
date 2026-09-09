@@ -650,7 +650,7 @@ def fetch_bars_frames(
         f"""
         SELECT instrument_id, session_date, open, high, low, close, volume
         FROM equity_daily_bars
-        WHERE instrument_id IN ({placeholders})
+        WHERE instrument_id IN ({placeholders}) AND finality = 'final'
         ORDER BY instrument_id, session_date
         """,
         list(instrument_ids),

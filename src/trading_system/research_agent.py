@@ -421,6 +421,7 @@ def research_ticker(
     tick_id: str | None = None,
     portfolio: dict[str, Any] | None = None,
     last_price: float | None = None,
+    price_snapshot: dict[str, Any] | None = None,
     portfolio_sig: str | None = None,
     regime: str | None = None,
     enforce_llm_budget: bool = False,
@@ -488,6 +489,8 @@ def research_ticker(
         {
             "ticker": ticker,
             "quant": _quant_slice(quant),
+            "price_snapshot": price_snapshot,
+            "daily_feature_basis": "completed_daily_bars_only_v1",
             "filing_passages": filing_text,
             "filing_metadata": [
                 {

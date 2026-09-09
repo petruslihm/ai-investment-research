@@ -130,10 +130,14 @@ def actionable_view(
     row = _as_mapping(rec)
     raw_action = str(getattr(row.get("action"), "value", row.get("action") or "") or "")
     raw_target = _f(row.get("recommended_units"))
+    valuation_unavailable = (
+        bool(row.get("position_held"))
+        and str(row.get("valuation_status") or "").upper() == "UNAVAILABLE"
+    )
     current = _f(row.get("current_units"))
     if current is None:
         current = _f(row.get("marked_units_final"))
-    if current is None:
+    if current is None and not valuation_unavailable:
         current = _f(row.get("acquisition_units")) or 0.0
     raw_delta = _f(row.get("delta_units"))
     if raw_delta is None and raw_target is not None:
@@ -143,6 +147,23 @@ def actionable_view(
     min_t = min_target_units(settings, base)
     min_d = min_delta_units(settings, base)
     quantum = display_unit_quantum(settings, base)
+
+    if valuation_unavailable:
+        return ActionableView(
+            raw_action=raw_action,
+            display_action=RecommendationAction.HOLD.value,
+            display_label="보유 · 평가 불가",
+            display_recommended_units=None,
+            display_delta_units=None,
+            raw_recommended_units=raw_target,
+            raw_delta_units=raw_delta,
+            suppressed=True,
+            reason_code="UNPRICED_HOLDING",
+            note="확정 평가가격이 없어 목표 배분을 계산하거나 실행할 수 없습니다.",
+            quantum=quantum,
+            min_target_units=min_t,
+            min_delta_units=min_d,
+        )
 
     disp_target = None if raw_target is None else round_units(raw_target, quantum)
     disp_delta = None if raw_delta is None else round_units(raw_delta, quantum)
