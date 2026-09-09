@@ -1,5 +1,9 @@
 # UI stack
 
+## 기본 제출 경로
+
+`investassist --demo`는 FastAPI와 기존 추천 렌더러를 사용하는 별도 합성 데모입니다. `--app`에서 아래 기존 연구 UI를 엽니다. 데모에 Node.js나 외부 제공자는 필요하지 않습니다.
+
 ## 구성
 
 **Backend:** FastAPI (MIT)가 JSON API와 별도 build 없이 사용할 수 있는 Jinja HTML shell을 제공합니다.
