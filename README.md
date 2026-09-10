@@ -1,91 +1,73 @@
-*본래 저만 사용하고자 만든 프로그램이었기 때문에, 추후에 LLM을 활용해 README를 구체화하였습니다.
 # AI Investment Research Assistant
 
-**가격의 시점부터 최종 판단·저장·화면까지 추적하는 투자 리서치 포트폴리오.**
+**수동 투자 리서치를 API로 연결하고, AI 판단의 근거·변경·실패를 추적하는 개인 프로젝트입니다.**
 
-후보 선별 뒤 조사 내용과 추천 수치가 서로 떨어져 있으면 어떤 근거로 판단했는지 확인하기 어렵습니다. 이 프로젝트는 Quant → Gemini → GPT → effective를 하나의 기록 흐름으로 연결합니다. 미국 주식·BTC·USD 현금을 다루는 로컬 의사결정 지원 도구이며 주문 API는 없습니다.
+처음에는 별도 프로젝트인 `etf-radar`로 후보를 선별하고 GPT에 직접 조사를 요청했습니다. 반복적인 입력과 결과 정리가 부담스러워 API 기반 시스템을 새로 만들었습니다. 이 저장소는 그 시스템에서 개인 운영 자료를 제외하고, 핵심 판단 흐름을 재현할 수 있도록 공개한 버전입니다.
 
-## 키 없는 데모
+현재는 이 과정에서 얻은 자동화·검증 경험을 바탕으로 기존 `etf-radar`도 보강하고 있습니다. 두 프로젝트의 개발 경위와 비교의 한계는 아래 문서에 정리했습니다.
 
-Python 3.12와 [uv](https://docs.astral.sh/uv/)를 설치한 뒤 저장소 루트에서 실행합니다. Node.js와 API 키는 필요하지 않습니다.
+| 먼저 볼 내용 | 확인할 수 있는 것 |
+|---|---|
+| [개발 경위와 역할](docs/DEVELOPMENT.md) | 실제 불편 → API 도입 → 기존 로직에 자동화·검증 보강 |
+| [문제 해결 사례](docs/CASE_STUDIES.md) | 판단과 화면의 불일치, 불완전한 계좌, 최종 단계의 판단 변경, 평가 지표 수정 |
+| [평가 결과와 근거](docs/EVALUATION.md) | 공개 재현 범위와 비공개 운영 관찰의 구분, 아직 검증하지 못한 것 |
+
+## API 키 없이 실행하기
+
+Python 3.12와 [uv](https://docs.astral.sh/uv/)가 필요합니다. 저장소를 내려받은 뒤 루트에서 실행합니다. Node.js와 API 키는 필요하지 않습니다.
 
 ```powershell
 uv sync --extra dev --locked
 uv run investassist --demo
 ```
 
-[http://127.0.0.1:8744](http://127.0.0.1:8744)를 엽니다. 옵션 없는 `uv run investassist`도 같은 안전한 데모입니다. 종료는 터미널에서 Ctrl+C입니다.
+[http://127.0.0.1:8744](http://127.0.0.1:8744)를 엽니다. 옵션 없는 `uv run investassist`도 같은 데모입니다. 종료는 Ctrl+C입니다. [상세 실행 안내](docs/RUNNING.md)
 
-**DEMO / SYNTHETIC:** 가상 종목·가격·단계별 응답을 사용하는 예제입니다. 실제 모델 예측, Gemini/GPT API 응답, 투자 추천이나 성과가 아닙니다. 키가 환경에 있어도 데모는 외부 제공자를 호출하지 않으며 모델을 학습하지 않습니다. 실제 판단 검증·제약 적용·DuckDB 저장·화면 복원 코드를 사용합니다.
+**DEMO / SYNTHETIC:** 종목·가격·Quant/Gemini/GPT 출력은 합성 예제입니다. 외부 API를 호출하거나 모델을 학습하지 않습니다. 실제 코드로 판단 검증, 배분 제약, DuckDB 저장, 화면 복원을 실행합니다. 데모 결과는 투자 추천이나 수익률 증거가 아닙니다.
 
-![DEMO: 판단 흐름과 단계별 비교](docs/images/decision-demo.png)
+![합성 예제: 단계별 판단과 제약 적용 결과](docs/images/decision-stages.png)
 
-![DEMO: 단계별 단위 변화와 최종 결과](docs/images/decision-stages.png)
+ALPHA는 WATCH로 변경되고, GAMMA의 요청 400 units는 종목 한도에 따라 250으로 조정됩니다. 화면의 GPT 반영 열에는 제약을 적용한 값이 표시됩니다. Units는 사용자 정의 배분단위이며 주식 수나 달러 금액이 아닙니다.
 
-## 면접에서 보여줄 세 가지
+## 구현에서 중점을 둔 것
 
-1. **가격 시점의 명시:** 확정 종가와 장중 미완성 일봉 관측을 구분하고 출처·세션·수집 시각을 표시합니다. 피처와 거래량 비교는 완료 일봉만 사용합니다. 제공되지 않는 체결 시각은 만들어내지 않습니다.
-2. **단일 최종 결과:** 구조화 GPT 결과의 종목·행동·단위·순위를 검증하고 포트폴리오 제약을 적용합니다. 설명·카드·정렬·요약은 저장된 `effective`에서 나옵니다.
-3. **추적과 복원:** Quant 원본, Gemini 반영, GPT 반영, effective를 같은 입력 ID·기준 시각에 연결해 저장합니다. 실패·미확정 상태와 저장 후 다시 읽은 결과를 회귀 테스트로 확인합니다.
-
-## 판단 흐름
+| 문제 | 현재 구현 | 코드·검증 |
+|---|---|---|
+| AI 설명과 실제 표시 수치가 달라질 수 있음 | 구조화 결과를 검증하고 제약 적용 후의 `effective`를 설명·카드·요약의 기준으로 사용 | [final_decision.py](src/trading_system/final_decision.py), [데모 테스트](tests/test_submission_demo.py) |
+| 호출 실패나 평가 불가를 정상 판단으로 오인 | 실패 대체의 출처를 표시하고, 미확정 값은 `null`로 유지 | [recommendations.py](src/trading_system/recommendations.py), [파이프라인 테스트](tests/test_v1_pipeline.py) |
+| 최신 시세와 확정 일봉이 섞임 | 완료 일봉과 장중 관측을 구분하고 출처·수집 시각을 기록 | [decision_data.py](src/trading_system/market/decision_data.py), [시점 테스트](tests/test_price_provenance.py) |
+| 결과만 남으면 판단 변경을 설명하기 어려움 | Quant → Gemini → GPT → effective를 같은 입력 ID와 tick에 저장 | [ticks.py](src/trading_system/storage/ticks.py) |
+| 지표·출처 라벨이 검증 수준을 과장 | 모델별 시간순 분리 지표를 계산하고, URL 인용과 사실 검증을 구분 | [평가 무결성 테스트](tests/test_evaluation_integrity.py) |
 
 ```mermaid
 flowchart LR
-    D[시점·출처가 있는 시장 데이터] --> Q[Quant 후보·초기 배분]
-    Q --> R[Gemini 근거 조사·제한된 배분 보정]
-    R --> G[GPT 구조화 최종 판단]
-    G --> V[검증·포트폴리오 제약]
+    D[시점·출처가 있는 데이터] --> Q[Quant 후보·초기 배분]
+    Q --> R[Gemini 근거 조사·배분 보정]
+    R --> G[GPT 구조화 판단]
+    G --> V[검증·배분 제약]
     V --> E[effective]
-    R -->|호출·파싱 실패: 명시적 대체| E
+    R -->|GPT 실패 시 출처를 표시한 대체| E
     Q --> S[(단계별 기록)]
     R --> S
     G --> S
     E --> S
-    S --> U[설명·카드·요약·다시 읽기]
+    S --> U[설명·카드·요약·복원]
 ```
 
-| 단계 | 역할 |
-|---|---|
-| Quant | 연구 경로에서는 가격·거래량과 5/10/20일 모델 예측으로 후보·초기 배분을 계산합니다. 데모에서는 수작업 예제 값을 사용합니다. |
-| Gemini | 신규 주식 후보의 근거·반대 근거·누락을 정리합니다. 유효한 조사 점수는 기존 제한 범위에서 배분을 보정합니다. |
-| GPT | 허용된 종목 전체를 다루는 구조화 결과를 검증합니다. WATCH는 기존 보유를 자동 청산하지 않습니다. |
-| effective | 제약 적용 후 실제 표시할 결과입니다. GPT 실패 시 Gemini 반영 결과를 대체 표시하며 GPT 최종 판단으로 표시하지 않습니다. |
+데모에서 **정상 판단, GPT 실패 대체, 평가 불가 보유, 저장 결과 다시 읽기**를 선택할 수 있습니다. 평가 불가 보유는 미보유 0으로 바꾸지 않습니다. 다시 읽기는 기존 결과의 복원이며 새로운 조사가 아닙니다.
 
-### 데모에서 확인할 시나리오
-
-- **최종 판단 반영:** ALPHA의 120 → 150 units가 WATCH 0으로 바뀝니다. GAMMA는 최종 순위 1위가 되고 요청 400 units는 종목 한도에 따라 250으로 조정됩니다.
-- **호출·파싱 실패:** 최종 GPT 결과 대신 Gemini 예제가 대체 결과로 표시됩니다.
-- **평가 불가 보유:** BETA의 보유 존재와 취득단위는 유지하고 현재 평가·목표는 `null`로 남깁니다. 전체 비중·현금은 미확정이며 실행 불가입니다.
-- **저장 결과 다시 읽기:** 이전 화면의 동일 입력 ID·결과를 DuckDB에서 복원합니다. 또 다른 판단을 생성하는 기능이 아닙니다.
-
-Units는 사용자 정의 배분단위이며 주식 수·달러 금액이 아닙니다. 실제 미보유 0과 평가 불가 null은 구분합니다.
-
-## 선택적 실제 API 연결
-
-기본 제출 경로는 위 데모입니다. 별도 연구 UI가 필요하면 `.env.example`을 `.env`로 복사하고 원하는 제공자 설정만 입력한 뒤 `uv run investassist --app`을 실행합니다. 연구 UI는 localhost:8743을 사용하며 설정된 제공자 호출에 비용이 발생할 수 있습니다. 이 제출 검증에서는 실행하지 않았습니다.
-
-Alpaca 시장 데이터, SEC 연락처, Gemini·OpenAI 키는 선택 사항입니다. 키가 없으면 연구 UI는 미설정 상태를 표시합니다. 자동 실행에는 UTC 일일 soft budget이 있지만 실제 청구 상한은 아니며 수동 스캔은 이 한도에 합산되지 않습니다. [설정과 실행 안내](docs/RUNNING.md)
-
-## 검증
+## 검증과 실행 범위
 
 ```powershell
-uv run pytest tests/test_submission_demo.py tests/test_openai_judge.py tests/test_v1_pipeline.py -q
-uv run pytest tests/test_price_provenance.py -q
+uv run --locked pytest -q
 uv lock --check
 uv build
 ```
 
-핵심 테스트는 외부 제공자를 대역으로 교체하고 임시 DB를 사용합니다. 데모 테스트는 외부 네트워크 연결을 금지합니다. 전체 검사는 `uv run pytest -q`로 실행할 수 있습니다. [검증 결과와 범위](docs/VALIDATION.md)
+[검증 기록](docs/VALIDATION.md) · [자동 검사](https://github.com/petruslihm/ai-investment-research/actions/workflows/ci.yml) · [구조와 코드 탐색](docs/ARCHITECTURE.md) · [현재 한계](docs/LIMITATIONS.md)
 
-## 구조와 한계
+선택적 `uv run investassist --app`은 실제 제공자를 연결할 수 있는 연구 UI입니다. 설정된 API 호출에는 비용이 발생할 수 있습니다. 공개 데모 검증에서는 실제 API를 호출하지 않았으며, 별도 `etf-radar`의 운영 사례를 이 코드의 API 품질 검증으로 사용하지 않습니다.
 
-Python · DuckDB · pandas/NumPy · scikit-learn/LightGBM/PyTorch · FastAPI/Jinja · pytest · uv. 선택적 React client는 기본 데모에 필요하지 않습니다.
+Python · DuckDB · pandas/NumPy · scikit-learn/LightGBM/PyTorch · FastAPI/Jinja · pytest · uv. 미국 주식·BTC·USD 현금을 다루는 로컬 단일 사용자 도구이며 주문 API는 없습니다. 검증된 초과수익, 완전한 과거 시점 재현, 상용 서비스 운영을 주장하지 않습니다.
 
-- [구조와 코드 탐색](docs/ARCHITECTURE.md)
-- [현재 한계](docs/LIMITATIONS.md)
-- [UI 구성](docs/UI_STACK.md)
-
-**수익을 보장하지 않으며 검증된 초과수익 모델이 아닙니다.** 합성 예제와 테스트 통과는 예측 성능의 증거가 아닙니다. 실제 API 응답 품질·모델 가용성은 이번 제출 검증에서 확인하지 않았습니다. 당시 원문·컨센서스·시장 구성과 모델 상태 전체를 복원하는 완전한 과거 재현 시스템도 아닙니다.
-
-개발 과정에서 AI coding tools를 구현·리뷰·테스트 보조에 활용했습니다. 문제 정의, 요구사항, 주문 실행을 배제한 시스템 경계와 검증 기준은 프로젝트의 목적에 맞춰 직접 정하고 관리했습니다.
+개인 리서치의 문제 정의와 개발 방향은 작성자가 정했습니다. 코드 구현·문서화·리뷰·테스트 보조에는 GPT와 AI coding tools를 폭넓게 활용했습니다. [작성자 역할과 AI 활용 범위](docs/DEVELOPMENT.md#작성자-역할과-ai-활용)

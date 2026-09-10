@@ -43,6 +43,7 @@ include = [
     "/src",
     "/tests",
     "/docs",
+    "/scripts/smoke_wheel.py",
     "/ui",
     "/README.md",
 ]

@@ -4,7 +4,7 @@
 
 `cli.py`는 기본적으로 `demo.create_demo_app`을 시작합니다. 이 경로는 가상 응답을 실제 `final_decision` → `commit_tick` → `load_last_ui_snapshot` → 추천 렌더러에 연결합니다. 모델·제공자 호출은 하지 않습니다. 데모 결과는 `data/demo/demo.duckdb`에만 저장하며 Git에서 제외합니다.
 
-명시적인 `--app`은 기존 FastAPI/Jinja 연구 UI를 엽니다. 연구 경로의 실제 실행은 `v1_cycle.run_v1_cycle`입니다. 완료 시세 → 피처 → 모델 예측 → 기술 필터 → Quant 배분 → Gemini 조사·배분 보정 → 구조화 GPT → 제약 → effective → 원자적 tick 저장 순서입니다. 기존 모델과 전략을 새로 설계하지 않았습니다.
+명시적인 `--app`은 FastAPI/Jinja 연구 UI를 엽니다. 연구 경로의 실제 실행은 `v1_cycle.run_v1_cycle`입니다. 완료 시세 → 피처 → 모델 예측 → 기술 필터 → Quant 배분 → Gemini 조사·배분 보정 → 구조화 GPT → 제약 → effective → 원자적 tick 저장 순서입니다. 개발 배경은 [개발 경위](DEVELOPMENT.md)에 설명합니다.
 
 ## 코드를 짧게 보는 순서
 
@@ -17,6 +17,9 @@
 | `src/trading_system/v1_cycle.py` | 단계별 기록과 같은 입력에 대한 재개 |
 | `src/trading_system/storage/ticks.py` | transaction·idempotent tick commit |
 | `tests/test_submission_demo.py` | 실패·null·상한·저장·복원·외부 호출 금지 |
+| `src/trading_system/ml_engine.py` | 모델별 평가 입력·시간순 분리 지표·평가 불가 상태 |
+| `src/trading_system/judge_package.py` | 출처 목록 일치와 SEC 호스트 분류; 원문 사실 검증은 수행하지 않음 |
+| `tests/test_evaluation_integrity.py` | 모델별 지표·평가 중복 차단·과거 공유 지표 표시 제외·출처 라벨 |
 
 ## 기록 계약
 

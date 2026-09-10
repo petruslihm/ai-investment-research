@@ -1,41 +1,59 @@
-# 제출 검증 기록
+# 검증 기록
 
-2026-09-10, Windows / Python 3.12.10. 기본 제출 경로는 DEMO / SYNTHETIC이며 실제 운영·유료 API·주문·배포는 검증 대상에서 제외했습니다.
+검증일: **2026-09-10**. Windows / Python 3.12.10 / uv 0.12.6. 공개 합성 데모와 코드·패키징을 대상으로 검사했습니다. 이 작업에서 실제 제공자 API나 주문을 실행하지 않았습니다.
 
-## 설치·실행·패키징
+## 재현 명령
 
-- 기존 환경과 분리한 새 가상환경에서 `uv sync --extra dev --locked`로 54개 패키지 설치 구성을 확인했습니다. 저장소의 uv.lock을 사용했습니다.
-- README의 `uv run investassist --demo`로 loopback 데모를 실행하고 브라우저에서 정상·호출 실패·평가 불가 시나리오를 확인했습니다. 실제 화면을 README 이미지로 저장했습니다.
-- 기본 CLI는 키가 없어도 데모를 시작하며, 테스트에서 키가 설정된 환경에서도 외부 제공자 연결이 없는 것을 확인했습니다.
-- `investassist --help`를 확인했고 Windows cp949 콘솔에서 출력할 수 있는 도움말을 회귀 테스트로 남겼습니다.
-- `uv lock --check`, `uv build`로 잠금파일·sdist·wheel을 확인했습니다. 별도 환경에 wheel을 설치해 소스 checkout이 아닌 site-packages에서 데모 HTML·정적 CSS·저장 snapshot을 읽는 것을 확인했습니다.
+저장소 루트에서 실행합니다. 스레드 설정은 테스트 실행 자원을 제한하기 위한 값이며 모델·전략 설정을 바꾸지 않습니다.
 
-## 핵심 회귀 테스트
+```powershell
+uv sync --locked --extra dev
+$env:OMP_NUM_THREADS = "1"
+$env:MKL_NUM_THREADS = "1"
+uv run --locked pytest -q
+uv lock --check
+uv build
+```
 
-테스트는 영향 범위별로 실행했습니다. 전체 테스트 수를 투자 성과나 외부 API 검증처럼 해석하지 않습니다.
+**최종 전체 회귀: 442개 통과, 경고 1개, 229.55초.** 경고는 아래에 기록한 TestClient의 httpx deprecation입니다. 관련 검사만 통과한 결과를 전체 결과로 대신하지 않았습니다.
 
-| 범위 | 결과·의미 |
+## 핵심 확인 범위
+
+| 검사 | 확인한 동작 |
 |---|---|
-| `test_openai_judge.py`, `test_v1_pipeline.py` | 53개 통과. 구조화 요청·실패·기존 연구 실행·단계 기록·재개 경로; 외부 호출 대역 사용 |
-| `test_submission_demo.py` | 8개 통과. 방향·순위·배분 상한·설명·카드·null·실패 대체·저장 복원·환경 키 무시·CLI 문자 인코딩 |
-| `test_recommendations_page.py` | 20개 통과. 기존 추천 카드·상세 설명·요약 렌더링 호환성 |
-| `test_price_provenance.py` | 2개 통과. 당일 시세 수정 시 피처 갱신, 미완성 거래량 제외, 확정 종가/관측과 수집 시각 구분 |
+| `test_submission_demo.py` | 방향·순위·배분 상한·설명·카드·null·실패 대체·저장 복원·환경 키 무시 |
+| `test_openai_judge.py`, `test_v1_pipeline.py` | 구조화 요청·실패 처리·단계 기록·동일 입력 재개; 외부 호출 대역 사용 |
+| `test_price_provenance.py` | 확정 종가/장중 관측 구분, 피처 갱신, 미완성 거래량 제외 |
+| `test_evaluation_integrity.py` | 모델별 자체 평가 입력·지표, LSTM 표본 수, 중복/간격 부족 시 평가 보류, 과거 공유 지표 표시 제외, 출처 라벨 |
+| `test_features_extended.py` | 실험 피처의 저장·복원과 과거 데이터 prefix 기반 재계산 |
+| `scripts/smoke_wheel.py` | 설치된 wheel의 데모 HTML·CSS·제약·저장 snapshot 복원 |
 
-초기 데모 네트워크 차단 테스트가 Windows asyncio의 내부 loopback socket pair까지 차단해 실패했습니다. 외부 연결 차단은 유지하고 내부 loopback만 허용한 뒤 데모 테스트가 통과했습니다. 브라우저에서 발견한 대체 결과의 잘못된 0% 추적 안내는 effective 요약으로 통일하고 회귀 검증했습니다.
+데모 테스트는 외부 socket 연결을 금지하고 Windows asyncio가 사용하는 내부 loopback만 허용합니다. 테스트용 DB와 모델 산출물은 임시 디렉터리를 사용합니다. 테스트 통과는 실제 API의 가용성·사실성이나 투자 수익률 검증이 아닙니다.
 
-실제 제공자 호출은 한 번도 수행하지 않았습니다. 모델 학습·예측 성능·수익률 비교를 수행한 결과가 아닙니다. 기존 전체 427개 테스트 통과 기록은 이전 공개본의 기록이며 이번 변경 전체의 검증 결과로 재사용하지 않았습니다. 현재 전체 테스트 실행 방법은 `uv run pytest -q`입니다.
+## 설치·패키지 검증
 
-## 공개 범위
+- 새 가상환경에서 `uv sync --locked --extra dev`로 잠금파일의 54개 패키지를 설치했습니다.
+- `uv lock --check`와 `uv build`가 통과했습니다. sdist에서 wheel을 빌드합니다.
+- 해당 환경의 editable 설치를 생성한 wheel로 교체한 뒤, 저장소 밖의 작업 디렉터리에서 `python -I`로 smoke 검사를 실행했습니다. import가 `site-packages`에서 오는지 검사하고 HTML·CSS·배분 한도·DB 저장 복원을 확인했습니다.
+- [GitHub Actions](https://github.com/petruslihm/ai-investment-research/actions/workflows/ci.yml)에는 Windows / Python 3.12에서 잠금파일 설치, 전체 pytest, 빌드, 설치 wheel 검사를 수행하는 워크플로를 추가했습니다. 원격 실행 결과는 해당 실행의 상태와 커밋을 기준으로 확인할 수 있습니다.
 
-추적 파일과 새 제출 파일, 로컬 Git의 도달 가능한 이력 blob을 검사했습니다. 인증정보 패턴·개인 이메일·사용자 로컬 절대경로·운영 DB/로그 파일명 후보를 검사하며 비밀값은 출력하지 않았습니다. 발견된 실제 비밀값·개인 운영 자료는 없습니다. example.com과 GitHub noreply 주소는 예제/커밋 식별자로 구분합니다.
+## 검사 중 발견한 문제와 수정
 
-운영 DB, 실제 LLM 응답 fixture, 개인 보유 자료, 운영 대기 기록 변환·백업 문서는 이식하지 않았습니다. `data/`, `.env`, DB·모델·가상환경·빌드 산출물은 Git에서 제외합니다. 새 화면의 ALPHA/BETA/GAMMA는 가상 예제입니다. 원격 push·별도 원격 첨부자료 검사는 수행하지 않았습니다.
+모델 지표와 출처 라벨의 문제는 [사례 문서](CASE_STUDIES.md)에 기록했습니다. 회귀 테스트는 서로 다른 모델 예측값을 넣어 같은 Ridge MAE가 다른 모델에 복사되지 않는지 확인합니다. 소표본 학습·평가 중복과 날짜 간격 부족은 지표를 남기지 않아야 합니다.
 
-## 남은 한계
+첫 전체 실행은 441개 통과·1개 실패였습니다. 기존 확장 피처 테스트 fixture가 확정 일봉 상태를 `FINAL`로 넣었지만, 실제 enum과 조회 계약은 `final`이었습니다. fixture를 계약에 맞게 수정한 뒤 관련 검사 10개가 통과했습니다. 운영 쿼리에서 미완성 일봉을 허용하는 방식으로 우회하지 않았습니다.
 
-- 실제 API 모델·응답 형식·출처의 사실성·현재 비용은 미검증입니다.
-- 기존 FastAPI/Starlette TestClient의 httpx deprecation 경고가 남아 있습니다.
-- 선택적 React/Vite 의존성에는 이전에 moderate/high 경고가 보고됐습니다. 기본 Python 데모에 사용되지 않으며 이번 작업에서 React를 빌드하거나 해당 경고를 해결했다고 주장하지 않습니다.
-- 완전한 과거 시점 복원, 배분·거래비용을 반영한 초과수익 검증, 공개 서비스 배포는 범위 밖입니다.
+## 공개 범위 검사
 
-[실행 안내](RUNNING.md) · [설계](ARCHITECTURE.md) · [한계](LIMITATIONS.md)
+이번 변경·추가 파일에서 인증정보 형식과 개인 로컬 절대경로 패턴을 검사했고 후보를 발견하지 못했습니다. Markdown의 저장소 내부 파일 링크도 확인했습니다. 이는 범위가 정해진 패턴 검사이며 모든 비밀정보를 탐지하는 보증은 아닙니다.
+
+개인 계좌, 운영 DB, 실제 LLM 응답 원본을 이식하지 않았습니다. 별도 `etf-radar` 사례는 [집계·관찰](EVALUATION.md)로만 설명하며, 그 테스트 수를 공개본의 전체 결과에 합산하지 않습니다. 기존 Git 이력을 재작성하지 않고 개선 내용을 추가합니다.
+
+## 남아 있는 한계
+
+- FastAPI/Starlette TestClient의 httpx deprecation 경고가 있습니다.
+- 실제 API 모델·도구 지원·응답 품질·현재 비용은 이번 공개본 검사에서 미검증입니다.
+- 선택적 React/Vite 의존성에는 이전에 moderate/high 경고가 보고됐습니다. 기본 Python 데모에서 사용하지 않으며 이번 작업에서 React 빌드나 해당 경고 해결을 수행했다고 주장하지 않습니다.
+- 완전한 과거 시점 복원, 전략 수익률 비교, 다중 사용자 서비스 배포는 검증하지 않았습니다.
+
+[실행 안내](RUNNING.md) · [평가](EVALUATION.md) · [구조](ARCHITECTURE.md) · [한계](LIMITATIONS.md)

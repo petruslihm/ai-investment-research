@@ -32,6 +32,7 @@ localhost:8743의 연구 UI에서 설정과 수동 스캔을 사용합니다. `.
 ```powershell
 uv run pytest tests/test_submission_demo.py tests/test_openai_judge.py tests/test_v1_pipeline.py -q
 uv run pytest tests/test_price_provenance.py -q
+uv run pytest tests/test_evaluation_integrity.py -q
 uv lock --check
 uv build
 ```
