@@ -66,11 +66,11 @@ def _seed(conn) -> None:
             "horizon": 5,
             "previous_version": "1",
             "new_version": "1",
-            "reason_codes": ["walkforward_promote"],
+            "reason_codes": ["batch_fit_applied", "CHRONOLOGICAL_HOLDOUT"],
             "matured_label_count": 640,
             "sample_count": 448,
-            "metric_name": "walkforward_mae",
-            "metric_before": 0.031,
+            "metric_name": "chronological_holdout_mae",
+            "metric_before": None,
             "metric_after": 0.024,
             "promotion_result": "accepted",
             "training_period": "2025-01-02 ~ 2026-05-30",
@@ -153,8 +153,9 @@ def test_journal_cards_carry_the_facts(store: Store) -> None:
     assert promoted.matured == "640건"
     assert promoted.training_window == "2025-01-02 ~ 2026-05-30"
     assert promoted.evaluation_window == "2026-06-01 ~ 2026-08-20"
-    assert "0.03100" in promoted.metric_line and "0.02400" in promoted.metric_line
-    assert promoted.metric_improved == "개선"
+    assert "0.02400" in promoted.metric_line
+    assert "동일 조건 비교 아님" in promoted.metric_line
+    assert promoted.metric_improved is None
     assert promoted.result_label == "적용됨"
     assert "5일" in promoted.effect
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", promoted.at)
@@ -283,6 +284,6 @@ def test_research_metrics_are_labelled_separately_from_live(store: Store) -> Non
     view = collect_models_view(store.conn)
     html = render_models_page(view, horizon="all", change="all", family="all")
     assert "실시간 성과 (성숙한 추천 결과)" in html
-    assert "연구 진단 (워크포워드)" in html
+    assert "연구 진단 (시간순 분리)" in html
     assert "실현 성과가 아니며" in html
     assert view.research_rows and view.research_rows[0][0] == "미국 주식"

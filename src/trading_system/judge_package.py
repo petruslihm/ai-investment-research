@@ -1,4 +1,4 @@
-"""Structured Evidence Pack / judge payload compaction and source verification."""
+"""Evidence-pack compaction and URL attribution, not factual verification."""
 
 from __future__ import annotations
 
@@ -25,19 +25,25 @@ def _normalize_url(url: str) -> str:
     if not raw:
         return ""
     parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return ""
     host = (parsed.hostname or "").lower().removeprefix("www.")
     path = (parsed.path or "").rstrip("/")
-    return f"{host}{path}"
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{host}{path}{query}"
 
 
 def _is_sec_url(url: str) -> bool:
+    if not _normalize_url(url):
+        return False
     host = (urlparse(url).hostname or "").lower()
     if host in _SEC_HOSTS:
         return True
     return host.endswith(".sec.gov")
 
 
-def verified_url_set(pack: dict[str, Any] | None) -> set[str]:
+def cited_url_set(pack: dict[str, Any] | None) -> set[str]:
+    """Collect supplied references; even 'verified_sources' is untrusted input."""
     out: set[str] = set()
     if not isinstance(pack, dict):
         return out
@@ -50,8 +56,6 @@ def verified_url_set(pack: dict[str, Any] | None) -> set[str]:
                 url = str(item.get("url") or item.get("uri") or item.get("source_url") or "")
             if url:
                 out.add(_normalize_url(url))
-                if _is_sec_url(url):
-                    out.add(_normalize_url(url))
     for row in pack.get("filings") or []:
         if not isinstance(row, dict):
             continue
@@ -59,13 +63,19 @@ def verified_url_set(pack: dict[str, Any] | None) -> set[str]:
             url = str(row.get(key) or "")
             if url:
                 out.add(_normalize_url(url))
-        acc = str(row.get("accession") or "")
-        if acc:
-            out.add(acc.replace("-", "").lower())
     return {x for x in out if x}
 
 
-def _mark_claim(row: Any, verified: set[str]) -> dict[str, Any]:
+def _source_status(url: str, cited: set[str]) -> str:
+    identity = _normalize_url(url)
+    if identity and identity in cited:
+        return "CITED_URL"
+    if _is_sec_url(url):
+        return "SEC_DOMAIN_ONLY"
+    return "UNVERIFIED"
+
+
+def _mark_claim(row: Any, cited: set[str]) -> dict[str, Any]:
     if isinstance(row, str):
         return {"claim": row, "source_url": "", "source_status": "UNVERIFIED"}
     if not isinstance(row, dict):
@@ -73,32 +83,28 @@ def _mark_claim(row: Any, verified: set[str]) -> dict[str, Any]:
     out = dict(row)
     url = str(out.get("source_url") or out.get("url") or "").strip()
     out["source_url"] = url
-    if not url:
-        out["source_status"] = "UNVERIFIED"
-        return out
-    if _is_sec_url(url) or _normalize_url(url) in verified:
-        out["source_status"] = "VERIFIED_SOURCE"
-    else:
-        out["source_status"] = "UNVERIFIED"
+    out["source_status"] = _source_status(url, cited)
     return out
 
 
 def verify_pack_sources(pack: dict[str, Any] | None) -> dict[str, Any]:
+    """Historical API name: classify URL attribution without fetching any source.
+
+    CITED_URL means list membership; SEC_DOMAIN_ONLY means the hostname matches.
+    Neither confirms that a page exists or supports the associated claim.
+    Recompute old labels rather than carrying VERIFIED_SOURCE forward.
+    """
     base = dict(pack or {})
-    verified = verified_url_set(base)
+    cited = cited_url_set(base)
     for key in ("supporting_evidence", "contrary_evidence"):
-        base[key] = [_mark_claim(row, verified) for row in (base.get(key) or [])]
+        base[key] = [_mark_claim(row, cited) for row in (base.get(key) or [])]
     news = []
     for row in base.get("news_events") or []:
         if isinstance(row, dict):
             item = dict(row)
             url = str(item.get("url") or item.get("source_url") or "").strip()
             item["source_url"] = url
-            item["source_status"] = (
-                "VERIFIED_SOURCE"
-                if url and (_is_sec_url(url) or _normalize_url(url) in verified)
-                else "UNVERIFIED"
-            )
+            item["source_status"] = _source_status(url, cited)
             news.append(item)
         else:
             news.append(row)

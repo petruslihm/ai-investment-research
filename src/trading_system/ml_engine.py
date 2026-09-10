@@ -303,6 +303,44 @@ def last_promoted(
     return (row[0] or None), metric
 
 
+def _holdout_mae(
+    bundle: FittedBundle,
+    x: np.ndarray,
+    y: np.ndarray,
+    keys: list[tuple[str, date]],
+    train: np.ndarray,
+    test: np.ndarray,
+    *,
+    purge: int,
+) -> tuple[float | None, str, int]:
+    """Report only this estimator's purged chronological holdout error.
+
+    Training keeps its historical small-sample fallbacks. Those fallbacks must
+    not become out-of-sample evidence merely because they return test indices.
+    LambdaRank outputs relevance scores, not returns, so return MAE is invalid.
+    """
+    if bundle.family == "lambdarank":
+        return None, "RANKING_METRIC_NOT_EVALUATED", 0
+    if not len(train) or not len(test) or len(keys) != len(y):
+        return None, "NO_VALID_HOLDOUT", 0
+    if set(train.tolist()) & set(test.tolist()):
+        return None, "TRAIN_TEST_OVERLAP", 0
+    dates = sorted({d for _, d in keys})
+    last_train = max(keys[int(i)][1] for i in train)
+    first_test = min(keys[int(i)][1] for i in test)
+    if dates.index(first_test) - dates.index(last_train) <= purge:
+        return None, "INSUFFICIENT_PURGE", 0
+    prediction = np.asarray(_predict(bundle, x[test]), dtype=float).reshape(-1)
+    actual = np.asarray(y[test], dtype=float).reshape(-1)
+    if (
+        prediction.shape != actual.shape
+        or not np.isfinite(prediction).all()
+        or not np.isfinite(actual).all()
+    ):
+        return None, "INVALID_EVALUATION_VALUES", 0
+    return float(np.mean(np.abs(prediction - actual))), "CHRONOLOGICAL_HOLDOUT", len(test)
+
+
 def train_batch_models(
     conn: duckdb.DuckDBPyConnection,
     artifacts_dir: Path,
@@ -325,20 +363,18 @@ def train_batch_models(
                 conn, asset_class=asset, horizon=h, lookback=LSTM_LOOKBACK, matured_only=True
             )
             if len(seq_y) >= 8:
-                str_, _ste = chronological_split(len(seq_y), purge=h, keys=seq_keys)
+                str_, ste = chronological_split(len(seq_y), purge=h, keys=seq_keys)
                 lstm = _fit_lstm(seq[str_], seq_y[str_])
                 lstm_lookback = LSTM_LOOKBACK
+                lstm_eval = (seq, seq_y, seq_keys, str_, ste)
             else:
                 lstm = _fit_lstm(xtr[:, None, :], ytr)
                 lstm_lookback = 1
+                lstm_eval = (x[:, None, :], y, keys, tr, te)
             lstm_b = FittedBundle("torch_sequence", h, asset, scaler, lstm, "1", lookback=lstm_lookback)
             out[(asset, h, "ridge")] = ridge_b
             out[(asset, h, "lightgbm_reg")] = lgbm_b
             out[(asset, h, "torch_sequence")] = lstm_b
-            te_idx = te if len(te) else tr
-            te_pred = _predict(ridge_b, x[te_idx])
-            te_true = y[te_idx]
-            mae = float(np.mean(np.abs(te_pred - te_true))) if len(te_true) else None
             if asset == AssetClass.US_EQUITY.value:
                 order, rel, groups = _rank_labels(y, keys, tr)
                 if len(groups) >= 2:
@@ -349,11 +385,18 @@ def train_batch_models(
             families_here = ["ridge", "lightgbm_reg", "torch_sequence"]
             if asset == AssetClass.US_EQUITY.value:
                 families_here.append("lambdarank")
-            train_window = _training_window(keys, tr)
-            eval_window = _training_window(keys, te_idx)
             for fam in families_here:
                 b = out[(asset, h, fam)]
-                prev_version, prev_metric = last_promoted(conn, asset=asset, horizon=h, family=fam)
+                ex, ey, ekeys, etrain, etest = lstm_eval if fam == "torch_sequence" else (x, y, keys, tr, te)
+                mae, evaluation_status, eval_count = _holdout_mae(b, ex, ey, ekeys, etrain, etest, purge=h)
+                train_window = _training_window(ekeys, etrain)
+                eval_window = _training_window(ekeys, etest) if mae is not None else None
+                prev_version, _ = last_promoted(conn, asset=asset, horizon=h, family=fam)
+                estimator_kind = (
+                    "ridge_fallback"
+                    if isinstance(b.model, tuple) and b.model[0] == "ridge_fallback"
+                    else fam
+                )
                 journal.append(
                     ModelChangeJournalEvent(
                         event_id=f"mcj_{uuid4().hex[:12]}",
@@ -363,12 +406,17 @@ def train_batch_models(
                         horizon=h,
                         previous_version=prev_version,
                         new_version=b.version,
-                        reason_codes=["walkforward_promote"],
-                        matured_label_count=int(len(y)),
-                        sample_count=int(len(ytr)),
-                        metric_name="walkforward_mae" if mae is not None else None,
-                        metric_before=prev_metric,
+                        reason_codes=["batch_fit_applied", evaluation_status],
+                        matured_label_count=int(len(ey)),
+                        sample_count=int(len(etrain)),
+                        metric_name="chronological_holdout_mae" if mae is not None else None,
+                        # Previous generations may use a different evaluation window
+                        # or the legacy shared-Ridge metric: no like-for-like delta.
+                        metric_before=None,
                         metric_after=mae,
+                        evaluation_status=evaluation_status,
+                        evaluation_sample_count=eval_count,
+                        estimator_kind=estimator_kind,
                         promotion_result="accepted",
                         training_period=train_window,
                         evaluation_period=eval_window,

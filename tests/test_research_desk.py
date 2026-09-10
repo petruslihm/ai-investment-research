@@ -615,7 +615,7 @@ def test_gemini_research_two_passes(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         assert pack["adversarial_review"]["main_objections"]
         assert any("peers cheaper" in str(row) for row in pack["contrary_evidence"])
         statuses = {row.get("source_status") for row in pack["supporting_evidence"] if isinstance(row, dict)}
-        assert "VERIFIED_SOURCE" in statuses
+        assert "CITED_URL" in statuses
         contrary_status = {
             row.get("source_status") for row in pack["contrary_evidence"] if isinstance(row, dict)
         }

@@ -99,6 +99,9 @@ class ModelChangeJournalEvent(BaseModel):
     matured_label_ids_hash: str | None = None
     training_period: str | None = None
     evaluation_period: str | None = None
+    evaluation_status: str | None = None
+    evaluation_sample_count: int | None = None
+    estimator_kind: str | None = None
     sample_count: int | None = None
     metric_name: str | None = None
     metric_before: float | None = None

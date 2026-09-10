@@ -125,7 +125,7 @@ def _insert_frame(
             float(row.low),
             float(row.close),
             float(row.volume),
-            "FINAL",
+            "final",
             "test-revision",
             "fixture",
             received,

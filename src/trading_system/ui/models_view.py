@@ -56,7 +56,14 @@ RETURN_FAMILY_KEYS: tuple[str, ...] = ("ridge", "lightgbm_reg", "torch_sequence"
 RANK_FAMILY_KEY = "lambdarank"
 
 REASON_TEXT: dict[str, str] = {
-    "walkforward_promote": "시간순 분리(워크포워드) 학습을 마치고 이번 세대 모델로 채택했습니다.",
+    "walkforward_promote": "이전 버전의 학습 적용 기록입니다. 당시 공유 평가 지표는 모델별 성능으로 표시하지 않습니다.",
+    "batch_fit_applied": "학습한 모델을 적용했습니다. 성능 향상을 검증해 선발했다는 의미는 아닙니다.",
+    "CHRONOLOGICAL_HOLDOUT": "해당 모델의 시간순 분리 평가 구간에서 MAE를 계산했습니다.",
+    "TRAIN_TEST_OVERLAP": "학습과 평가 표본이 겹쳐 평가 지표를 보류했습니다.",
+    "INSUFFICIENT_PURGE": "학습과 평가 사이의 시간 간격이 부족해 평가 지표를 보류했습니다.",
+    "NO_VALID_HOLDOUT": "유효한 분리 평가 표본이 없어 지표를 보류했습니다.",
+    "RANKING_METRIC_NOT_EVALUATED": "순위 모델의 별도 순위 지표는 미평가입니다. 수익률 MAE를 사용하지 않습니다.",
+    "INVALID_EVALUATION_VALUES": "평가값이 유효하지 않아 지표를 보류했습니다.",
     "matured_ewma": "성숙한 실제 결과의 평균 절대오차를 비교해 가중치를 다시 계산했습니다.",
     "matured_label_partial_fit": "새로 성숙한 라벨로 온라인 모델을 추가 학습했습니다.",
 }
@@ -262,12 +269,17 @@ def _result(kind: str, payload: dict[str, Any]) -> tuple[str, str]:
 
 
 def _metric_line(payload: dict[str, Any]) -> tuple[str, str | None]:
+    if payload.get("metric_name") == "walkforward_mae":
+        return "이전 공유 지표 · 모델별 성능으로 사용 불가", None
     before = _num(payload.get("metric_before"))
     after = _num(payload.get("metric_after"))
     if before is None and after is None:
         return NO_METRIC, None
     name = str(payload.get("metric_name") or "지표")
-    label = {"walkforward_mae": "워크포워드 MAE", "matured_mean_abs_error": "성숙 결과 평균오차"}.get(name, name)
+    label = {"chronological_holdout_mae": "시간순 분리 MAE", "matured_mean_abs_error": "성숙 결과 평균오차"}.get(name, name)
+    if name == "chronological_holdout_mae":
+        fallback = " · Ridge 대체 모델" if payload.get("estimator_kind") == "ridge_fallback" else ""
+        return f"{label} {_metric(after)}{fallback} (이전 세대와 동일 조건 비교 아님)", None
     if before is None:
         return f"{label} {_metric(after)} (직전 기록 없음)", None
     if after is None:
@@ -449,7 +461,8 @@ def collect_models_view(
         key = (str(payload.get("horizon") or ""), str(payload.get("model_family") or ""))
         if key in research:
             continue
-        research[key] = (payload.get("metric_after"), payload.get("training_period"))
+        metric = payload.get("metric_after") if payload.get("metric_name") == "chronological_holdout_mae" else None
+        research[key] = (metric, payload.get("training_period"))
 
     horizon_cards: list[dict[str, Any]] = []
     for h in ("5", "10", "20"):
@@ -510,12 +523,12 @@ def collect_models_view(
         if key in seen_research:
             continue
         seen_research.add(key)
-        metric = payload.get("metric_after")
+        metric = payload.get("metric_after") if payload.get("metric_name") == "chronological_holdout_mae" else None
         research_rows.append(
             (
                 _ASSET_LABELS.get(asset, "기록 없음" if not asset else asset),
                 f"{key[1]}일" if key[1] else "—",
-                family_label(key[2]),
+                family_label(key[2]) + (" (Ridge 대체)" if payload.get("estimator_kind") == "ridge_fallback" else ""),
                 _metric(metric) if metric is not None else "—",
                 str(payload.get("training_period") or "기록 없음"),
             )
@@ -577,12 +590,12 @@ def _horizon_card_html(card: dict[str, Any]) -> str:
     return f"""
     <div class="card">
       <h2>{_esc(card['horizon'])}일 앙상블</h2>
-      <p class="hint">기대수익 blend 비중입니다. 옆의 연구 MAE는 워크포워드 진단값이며 실현 성과가 아닙니다.</p>
+      <p class="hint">기대수익 blend 비중입니다. 연구 MAE는 각 모델의 시간순 분리 진단값이며 실현 성과가 아닙니다. 표본 구간은 모델별로 다를 수 있으며, 대체 모델 사용 여부는 아래 연구 진단에 표시합니다.</p>
       {rows}
       <div class="row" style="border-top:1px solid var(--border);margin-top:0.35rem">
         <span>{_esc(rank['label'])} <span class="badge badge-neutral">순위 전용</span></span>
         <span><b>{_esc(rank['weight'])}</b>
-        <span class="hint" style="margin-left:0.5rem">연구 MAE {_esc(rank['metric'])}</span></span>
+        <span class="hint" style="margin-left:0.5rem">순위 지표 미평가</span></span>
       </div>
       <p class="hint" style="margin-top:0.6rem">기간 반영 비중 {_esc(card['influence'])} ·
       LambdaRank는 종목 순위에만 쓰이고 기대수익에는 들어가지 않습니다.<br/>
@@ -672,7 +685,7 @@ def render_models_page(view: ModelsView, *, horizon: str, change: str, family: s
     if view.research_rows:
         research = (
             "<table><thead><tr><th>자산</th><th>기간</th><th>모델</th>"
-            "<th>워크포워드 MAE</th><th>학습 구간</th></tr></thead><tbody>"
+            "<th>시간순 분리 MAE</th><th>학습 구간</th></tr></thead><tbody>"
             + "".join(
                 f"<tr><td>{_esc(asset)}</td><td>{_esc(hz)}</td><td>{_esc(fam)}</td>"
                 f"<td>{_esc(metric)}</td><td>{_esc(period)}</td></tr>"
@@ -720,7 +733,8 @@ def render_models_page(view: ModelsView, *, horizon: str, change: str, family: s
       {override}
     </div>
     <div class="card">
-      <h2>연구 진단 (워크포워드)</h2>
+      <h2>연구 진단 (시간순 분리)</h2>
+      <p class="hint">단일 시간순 분리 평가입니다. 반복 워크포워드·투자 수익률 검증이 아닙니다. 순위 모델, 평가 표본 부족, 이전 공유 지표는 —로 표시합니다.</p>
       <p class="hint">학습 시점의 시간순 분리 검증 수치입니다. 실현 성과가 아니며 위 실시간 성과와 다릅니다.</p>
       {research}
     </div>

@@ -407,9 +407,9 @@ def test_q08_unverified_urls_are_not_grounded() -> None:
         }
     )
     by_claim = {row["claim"]: row["source_status"] for row in pack["supporting_evidence"]}
-    assert by_claim["grounded"] == "VERIFIED_SOURCE"
+    assert by_claim["grounded"] == "CITED_URL"
     assert by_claim["invented"] == "UNVERIFIED"
-    assert pack["contrary_evidence"][0]["source_status"] == "VERIFIED_SOURCE"
+    assert pack["contrary_evidence"][0]["source_status"] == "SEC_DOMAIN_ONLY"
 
 
 def test_q09_lambdarank_orders_shortlist_without_entering_expected_return() -> None:
