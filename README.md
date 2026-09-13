@@ -12,6 +12,12 @@
 [데모 실행](#데모-실행) · [문제 해결 사례](docs/CASE_STUDIES.md) · [개발 경위와 역할](docs/DEVELOPMENT.md) · [검증 기록](docs/VALIDATION.md)
 
 ## 사용 흐름
+0
+준비
+설정에서 스캔 대상 유니버스와 관심 종목을 설정하고, API 키를 입력하고, 카카오 계정을 연결합니다.
+
+<img width="923" height="677" alt="image" src="https://github.com/user-attachments/assets/cf832dc1-7ccb-408e-9186-465c0fcf2f8f" />
+
 1
 Quant — 후보 선별
 먼저 가격과 기술 지표를 API로 받아오고, 이 수치들을 분석해 설정된 기준에 맞는 종목들을 추려, 조사할 후보 종목과 초기 배분안을 만듭니다.
