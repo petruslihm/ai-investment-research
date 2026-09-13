@@ -119,8 +119,7 @@ uv run investassist --demo
 
 ## 개발 경위와 역할
 
-기존 [ETF Radar](https://github.com/petruslihm/etf-radar)로 후보를 선별하고 GPT에 직접 조사하던 작업을 자동화하고자 이 시스템을 별도로 개발했습니다. 
+기존 [처음 프로그램](https://github.com/petruslihm/first-etf-radar)으로 후보를 선별하고 GPT에 직접 조사하던 작업을 자동화하고자 이 시스템을 별도로 개발했습니다. 
 
-공개본에는 개인 계좌·운영 DB·실제 LLM 응답을 포함하지 않았습니다. [개발 과정과 역할 상세](docs/DEVELOPMENT.md)
 
 **기술 스택:** Python · FastAPI/Jinja · DuckDB · pandas/NumPy · scikit-learn/LightGBM/PyTorch · pytest · uv
