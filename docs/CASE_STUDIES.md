@@ -1,6 +1,7 @@
 # 문제 해결 사례
 
-저의 첫번째 프로그램인 `etf-radar`에 있던 문제점들을 이 두번째 프로그램에서 해결한 항목들을 나열했습니다. 이후에 세번째로 진행중인 프로젝트의 최신 코드는 [별도 공개 저장소](https://github.com/petruslihm/etf-radar)에서 확인할 수 있습니다. 
+저의 첫번째 프로그램인 `etf-radar`에 있던 문제점들을 이 두번째 프로그램에서 해결한 항목들을 나열했습니다.  [첫 번째 ETF Radar 저장소 보기](https://github.com/petruslihm/first-etf-radar)
+이후에 세번째로 진행중인 프로젝트의 최신 코드는 [별도 공개 저장소](https://github.com/petruslihm/third)에서 확인할 수 있습니다. 
 
 ## etf-rader에 있던 문제점들을 해결한 사례
 ### 최종 JSON 단계에서 판단 조건이 변경
