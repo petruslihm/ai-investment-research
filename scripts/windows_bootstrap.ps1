@@ -100,8 +100,21 @@ try {
     $env:UV_NO_MODIFY_PATH = '1'
     $env:PYTHONUTF8 = '1'
     Write-Host '[2/4] Preparing a private Python 3.12 installation...'
-    & $uv python install 3.12 --no-bin --no-registry
-    if ($LASTEXITCODE -ne 0) { throw 'Python installation failed. Check the message above.' }
+    $managedPython = Join-Path $env:UV_PYTHON_INSTALL_DIR 'cpython-3.12.14-windows-x86_64-none\python.exe'
+    Assert-InInstallRoot $managedPython
+    if (-not (Test-Path -LiteralPath $managedPython)) {
+        & $uv python install 3.12.14 --no-bin --no-registry
+        if ($LASTEXITCODE -ne 0 -and -not (Test-Path -LiteralPath $managedPython)) {
+            throw 'Python installation failed. Check the message above.'
+        }
+        Write-Host 'Python files downloaded. Verifying the installation...'
+    }
+    # Use the real, version-pinned interpreter path. This also handles uv #19622:
+    # extraction succeeds but the Windows minor-version junction cannot resolve.
+    $pythonVersion = & $managedPython --version
+    if ($LASTEXITCODE -ne 0 -or $pythonVersion -ne 'Python 3.12.14') { throw 'The installed Python could not be verified.' }
+    $foundPython = & $uv python find $managedPython --managed-python
+    if ($LASTEXITCODE -ne 0 -or -not $foundPython) { throw 'The installed Python could not be inspected.' }
 
     $appsDir = Join-Path $InstallRoot 'apps'
     New-Item -ItemType Directory -Force -Path $appsDir | Out-Null
@@ -119,7 +132,7 @@ try {
         Move-Item -LiteralPath $sourceFolder -Destination $appDir
     }
     Write-Host '[4/4] Installing the required packages and opening the program...'
-    & $uv sync --project $appDir --locked --no-dev --managed-python --python 3.12
+    & $uv sync --project $appDir --locked --no-dev --managed-python --python $managedPython
     if ($LASTEXITCODE -ne 0) { throw 'Package installation failed. Check the message above.' }
     $python = Join-Path $env:UV_PROJECT_ENVIRONMENT 'Scripts\python.exe'
     $runArgs = @((Join-Path $appDir 'scripts\launch_desktop.py'), '--state-dir', $InstallRoot)
