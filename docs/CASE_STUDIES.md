@@ -47,5 +47,4 @@ AI가 행동이나 배분을 바꿔도 카드·요약이 이전 Quant 값으로 
 **근거:** [모델 평가](../src/trading_system/ml_engine.py), [모델 화면](../src/trading_system/ui/models_view.py), [출처 분류](../src/trading_system/judge_package.py), [평가 무결성 검사](../tests/test_evaluation_integrity.py).
 
 이 지표는 모델 진단이며 실제 거래비용을 반영한 전략 수익률 비교가 아닙니다.
-
-[README](../README.md) · [평가 범위](EVALUATION.md)
+[평가 범위](EVALUATION.md)
