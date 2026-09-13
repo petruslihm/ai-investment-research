@@ -56,7 +56,7 @@ GPT 호출 실패나 잘못된 응답은 대체 결과의 출처와 함께 표�
 
 ## 데모 실행
 
-**Python 3.12와 [uv](https://docs.astral.sh/uv/)**를 준비한 뒤, 저장소를 내려받아 루트에서 실행합니다. API 키와 Node.js는 필요하지 않습니다.
+Python 3.12와 [uv](https://docs.astral.sh/uv/)를 준비한 뒤, 저장소를 내려받아 루트에서 실행합니다. API 키와 Node.js는 필요하지 않습니다.
 
 ```powershell
 uv sync --extra dev --locked
