@@ -1690,8 +1690,8 @@ def create_app() -> FastAPI:
         banner = ""
         if missing:
             banner = (
-                "<div class='banner'>시작 시 API 키는 선택 사항입니다. "
-                "실시간 Alpaca/LLM을 쓰려면 <a href='/settings'>설정</a>에서 입력하세요. "
+                "<div class='banner'>실제 리서치에는 Alpaca·Gemini·OpenAI API 설정이 모두 필요합니다. "
+                "<a href='/settings'>설정</a>에서 필수 키를 입력하세요. "
                 f"현재 없음: {_esc(', '.join(missing))}. "
                 "그때까지 해당 기능은 미설정으로 표시되며, 가짜 LLM/SEC 추출을 만들지 않습니다.</div>"
             )
@@ -2482,7 +2482,7 @@ def create_app() -> FastAPI:
         body = f"""
         {flash_html}
         <h1>설정</h1>
-        <p class="lead">실시간 데이터·LLM·카카오 알림은 필요할 때만 설정하면 됩니다. 키 없이도 앱은 시작됩니다.</p>
+        <p class="lead">실제 리서치를 실행하려면 Alpaca·Gemini·OpenAI API 키가 모두 필요합니다. 아래에 키를 저장한 뒤 대시보드에서 분석을 실행하세요. 카카오 알림은 선택 기능입니다.</p>
         {universe_card}
         <div class="card">
           <h2>투자 성향</h2>
@@ -2507,10 +2507,13 @@ def create_app() -> FastAPI:
         <div class="card">
           <h2>API 키</h2>
           <form method="post" action="/settings">
-            {_secret_field("ALPACA_API_KEY", "Alpaca API Key", env, "시장 데이터", conn_key="alpaca", conn_status=conn_map.get("alpaca"))}
+            {_secret_field("ALPACA_API_KEY", "Alpaca API Key · 필수", env, "분석할 종목의 시장 데이터", conn_key="alpaca", conn_status=conn_map.get("alpaca"))}
             {_secret_field("ALPACA_SECRET_KEY", "Alpaca Secret Key", env, conn_key="alpaca", conn_status=conn_map.get("alpaca"))}
-            {_secret_field("OPENAI_API_KEY", "OpenAI API Key", env, "GPT-5.6 Sol 최종 판단에 씁니다. Quant 점수를 그대로 따르지 않습니다.", conn_key="openai", conn_status=conn_map.get("openai"))}
-            {_secret_field("GEMINI_API_KEY", "Gemini API Key", env, "현재 legacy-b 방식의 연속 GPT 스캔에서는 사용하지 않습니다.", conn_key="gemini", conn_status=conn_map.get("gemini"))}
+            {_secret_field("OPENAI_API_KEY", "OpenAI API Key · 필수", env, "GPT의 조사·최종 판단 검토에 사용합니다.", conn_key="openai", conn_status=conn_map.get("openai"))}
+            {_secret_field("GEMINI_API_KEY", "Gemini API Key · 필수", env, "신규 주식 후보의 근거 조사와 배분 보정에 사용합니다.", conn_key="gemini", conn_status=conn_map.get("gemini"))}
+            <div class="field"><label for="sec-contact">SEC 공시 조회용 연락처 이메일</label>
+              <input id="sec-contact" name="SEC_CONTACT_EMAIL" type="email" value="{_esc(env.get('SEC_CONTACT_EMAIL', ''))}"/>
+              <p class="hint">SEC 공시를 조회할 때 필요한 연락처입니다. API 키는 아닙니다.</p></div>
             {_secret_field("ANTHROPIC_API_KEY", "Anthropic API Key", env, "저장만 됩니다. 지금은 스캔에 쓰지 않습니다. console.anthropic.com의 API Keys에서 sk-ant- 키를 넣으세요.", conn_key="anthropic", conn_status=conn_map.get("anthropic"))}
             <button class="btn" type="submit">로컬 .env에 저장</button>
           </form>
@@ -2619,6 +2622,7 @@ def create_app() -> FastAPI:
         OPENAI_API_KEY: str = Form(""),
         GEMINI_API_KEY: str = Form(""),
         ANTHROPIC_API_KEY: str = Form(""),
+        SEC_CONTACT_EMAIL: str = Form(""),
     ) -> RedirectResponse:
         try:
             upsert_env(
@@ -2629,6 +2633,7 @@ def create_app() -> FastAPI:
                     "OPENAI_API_KEY": OPENAI_API_KEY,
                     "GEMINI_API_KEY": GEMINI_API_KEY,
                     "ANTHROPIC_API_KEY": ANTHROPIC_API_KEY,
+                    "SEC_CONTACT_EMAIL": SEC_CONTACT_EMAIL,
                 },
             )
         except ValueError:

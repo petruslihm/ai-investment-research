@@ -1,4 +1,4 @@
-"""First-run / Settings persistence for API keys. Never required to start the app."""
+"""Settings persistence and the provider keys required for complete research."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ ALLOWED_KEYS = (
     "OPENAI_API_KEY",
     "GEMINI_API_KEY",
     "ANTHROPIC_API_KEY",
+    "SEC_CONTACT_EMAIL",
     "KAKAO_REST_API_KEY",
     "KAKAO_CLIENT_SECRET",
     "KAKAO_REDIRECT_URI",
@@ -104,6 +105,8 @@ def missing_provider_keys(values: dict[str, str]) -> list[str]:
     missing = []
     if not values.get("ALPACA_API_KEY") or not values.get("ALPACA_SECRET_KEY"):
         missing.append("Alpaca market data")
-    if not any(values.get(k) for k in ("OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY")):
-        missing.append("LLM (optional extract/judge)")
+    if not values.get("OPENAI_API_KEY"):
+        missing.append("OpenAI GPT")
+    if not values.get("GEMINI_API_KEY"):
+        missing.append("Gemini research")
     return missing
