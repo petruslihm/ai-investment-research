@@ -9,7 +9,7 @@
 
 *해당 프로그램은 저의 두번째 프로그램이었고, 현재는 머신러닝의 기능을 활용하여 퀀트로 후보를 걸러내는 능력을 높인 세번째 프로그램을 개발중에 있고, 현재 개인적으로 사용중에 있습니다.  
 
-[데모 실행](#데모-실행) · [문제 해결 사례](docs/CASE_STUDIES.md) · [개발 경위와 역할](docs/DEVELOPMENT.md) · [검증 기록](docs/VALIDATION.md)
+[데모 실행](#데모-실행) · [문제 해결 사례](docs/CASE_STUDIES.md) · · [검증 기록](docs/VALIDATION.md)
 
 ## 사용 흐름
 0
@@ -128,11 +128,5 @@ Ridge·LightGBM·LSTM·온라인 SGD로 5·10·20일 구간의 수익률을 예�
 키가 없거나 사용 권한·할당량이 부족하면 전체 리서치를 실행할 수 없습니다. 실제 호출에는 제공자별 비용이 발생할 수 있습니다. SEC 공시 조회에는 별도로 연락처 이메일을 설정하며, 카카오 알림은 선택 기능입니다.
 
 [상세 실행 안내](docs/RUNNING.md) — 필수 설정, 분석 순서, 저장 위치, 종료와 문제 해결.
-
-
-## 개발 경위와 역할
-
-기존 [처음 프로그램](https://github.com/petruslihm/first-etf-radar)으로 후보를 선별하고 GPT에 직접 조사하던 작업을 자동화하고자 이 시스템을 별도로 개발했습니다. 
-
 
 **기술 스택:** Python · FastAPI/Jinja · DuckDB · pandas/NumPy · scikit-learn/LightGBM/PyTorch · pytest · uv
