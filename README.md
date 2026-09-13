@@ -12,14 +12,26 @@
 1
 Quant — 후보 선별
 먼저 가격과 기술 지표를 API로 받아오고, 이 수치들을 분석해 설정된 기준에 맞는 종목들을 추려, 조사할 후보 종목과 초기 배분안을 만듭니다.
+<img width="765" height="867" alt="image" src="https://github.com/user-attachments/assets/f3ac86ef-8b3c-4523-9690-18b0d9b11f6b" />
+코드를 통해 정량적으로 선별된 후보 순위입니다.
 
 2
 Gemini — 근거 조사
 후보 종목의 기업 정보와 위험 요인을 조사하고 초기 배분안을 보정합니다.
+<img width="933" height="638" alt="image" src="https://github.com/user-attachments/assets/45e80d03-9273-400c-945e-bc2ec720c82b" />
+<img width="928" height="578" alt="image" src="https://github.com/user-attachments/assets/5e9e6aa8-ecbe-4838-8e41-86bb9c86c3bb" />
+제미나이 API에게 보내는 원문과 시스템 프롬프트 중 일부입니다. 
+<img width="923" height="555" alt="image" src="https://github.com/user-attachments/assets/197236ca-e1dc-4304-b7bf-6b0bd6f0db0d" />
+제미나이 API에게서 온 답변중 일부입니다.
 
 3
 GPT — 최종 판단
 Quant 결과와 Gemini 조사 내용을 함께 검토해 종목별 행동, 순위, 목표 배분을 구조화된 형식으로 제시합니다.
+<img width="971" height="670" alt="image" src="https://github.com/user-attachments/assets/e2ca73bd-e29b-4195-8c70-1e61d6632256" />
+
+GPT API에게 보내는 프롬프트 중 일부입니다.
+<img width="901" height="738" alt="image" src="https://github.com/user-attachments/assets/ddcd9a28-c3cd-4358-b0b7-619bc30bcbbb" />
+GPT API에게서 온 답변중 일부입니다.
 
 4
 코드 검증 — 화면 반영
@@ -27,9 +39,15 @@ GPT 결과에 종목 누락, 잘못된 행동, 비정상적인 배분이 없는�
 
 5
 각 단계의 판단과 화면 결과를 같은 입력 ID로 저장합니다. 이를 통해 사용자는 **어느 단계에서 행동·순위·배분이 바뀌었는지 비교**하고, 저장된 결과를 다시 열어볼 수 있습니다. GPT 실패 시에는 Gemini 반영 결과로 대체하고 그 출처를 표시하도록 설계했습니다. 
+<img width="1457" height="557" alt="image" src="https://github.com/user-attachments/assets/67630f7c-0690-4240-a111-c9954c6ecf3b" />
 
 
 ## 부가적인 설계
+
+### 1. API 연결 확인
+API가 연결되지 않았는데 실행을 시킴으로써 시간과 토큰을 허비하는 문제점이 있었습니다. 저는 이를 최소화하기 위해, 먼저 가장 작은 단위의 토큰을 쓰는 매우 간단한 핑테스트를 통해 연결이 되었는지 확인하는 기능을 만들었습니다. 
+<img width="767" height="637" alt="image" src="https://github.com/user-attachments/assets/45e816b4-b17e-4f7d-8ead-a1a1b9e26e7e" />
+<img width="1007" height="797" alt="image" src="https://github.com/user-attachments/assets/c5551ac2-ebd6-4c60-b529-14691985c554" />
 
 ### 1. 실패와 모르는 값을 명확하게 표시
 
