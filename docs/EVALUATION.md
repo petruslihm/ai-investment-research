@@ -12,7 +12,7 @@
 | 별도 etf-radar 공개 스냅샷·합성 데모 | 입력 완전성, 최종 결과 계약, 저장·재개 통제 | 모든 자연어 의미·외부 원문의 사실성 |
 | 작성자의 개인 운용 경험 | 기존 로직을 다시 개선하게 된 동기 | 두 전략의 통계적으로 검증된 우열 |
 
-이 저장소의 실제 명령과 결과는 [검증 기록](VALIDATION.md)에 있습니다. 별도 ETF Radar 공개 스냅샷은 전체 검사 **271개 통과, 건너뜀 없음**이며 [그 저장소의 검증 기록](https://github.com/petruslihm/etf-radar/blob/main/docs/VALIDATION.md)에서 범위를 확인할 수 있습니다. 두 프로젝트의 테스트 수를 합산하거나 투자 성과 점수로 사용하지 않습니다.
+이 저장소의 실제 명령과 결과는 [검증 기록](VALIDATION.md)에 있습니다. 2026-09-13의 별도 ETF Radar 공개 스냅샷은 전체 검사 **306개와 subtest 12개 통과, 건너뜀 없음**이며 [그 저장소의 검증 기록](https://github.com/petruslihm/etf-radar/blob/main/docs/VALIDATION.md)에서 범위를 확인할 수 있습니다. 두 프로젝트의 테스트 수를 합산하거나 투자 성과 점수로 사용하지 않습니다.
 
 ## 별도 etf-radar 운영 사례: 1회 실행의 집계
 

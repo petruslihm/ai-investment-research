@@ -30,7 +30,7 @@
 
 **이전 대응:** 앞서 확인한 운영 버전에서는 초안 검증 후 `assert_draft_preserved`로 행동, 진입 범위, 추격 한도, 이벤트 조건, 종료 조건, 목표 비중, 현금 관련 필드를 비교했습니다. 지정 필드가 달라지면 보존 검사를 통과하지 못하는 방식이었습니다.
 
-**현재 공개 버전:** workflow 5에서는 별도 초안 단계와 `assert_draft_preserved`를 없애고 조사 뒤 구조화 최종 판단으로 연결했습니다. `validate_final`이 대상·날짜·행동·순위·숫자 범위·종료 조건을 검사합니다. [현재 소스와 한계](https://github.com/petruslihm/etf-radar/blob/main/docs/CASES.md), [검증 기록](https://github.com/petruslihm/etf-radar/blob/main/docs/VALIDATION.md)에서 직접 확인할 수 있습니다. 이전 버전의 검사 결과를 현재 방식의 증거로 사용하지 않습니다.
+**현재 공개 버전:** workflow 6에서는 별도 초안 단계와 `assert_draft_preserved`를 없애고 조사 뒤 사람이 읽는 판단과 정규 JSON 블록을 같은 단계에서 확정합니다. `validate_final`이 대상·날짜·행동·순위·숫자 범위·종료 조건을 검사하고, 기록 변환 결과가 정규 블록과 같은지도 확인합니다. BTC-USD는 최종 판단에 포함하되 주식 점수·백테스트·확률 보정과 분리했습니다. [현재 소스와 한계](https://github.com/petruslihm/etf-radar/blob/main/docs/CASES.md), [검증 기록](https://github.com/petruslihm/etf-radar/blob/main/docs/VALIDATION.md)에서 직접 확인할 수 있습니다. 이전 버전의 검사 결과를 현재 방식의 증거로 사용하지 않습니다.
 
 **한계:** 현재 검사는 구조와 지정 조건을 확인합니다. 정정 응답의 모든 판단 의미가 원래 답변과 같은지, 조사 내용이 사실인지까지 보증하지 않습니다. 판단 단계 축소만으로 과거 문제가 완전히 해결됐다고 주장하지 않습니다.
 
