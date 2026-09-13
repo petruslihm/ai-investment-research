@@ -2,7 +2,7 @@
 
 ## 기본 제출 경로
 
-`investassist --demo`는 FastAPI와 기존 추천 렌더러를 사용하는 별도 합성 데모입니다. `--app`에서 아래 기존 연구 UI를 엽니다. 데모에 Node.js나 외부 제공자는 필요하지 않습니다.
+Windows 실행 파일은 아래의 실제 연구 UI를 엽니다. 직접 실행할 때는 `investassist --app`을 사용합니다. Node.js는 필요하지 않으며, 실제 분석에는 Alpaca·Gemini·OpenAI API가 모두 필요합니다. [설치와 실행 안내](RUNNING.md)
 
 ## 구성
 
@@ -35,7 +35,7 @@
 ## 실행
 
 ```powershell
-uv run investassist          # FastAPI UI: http://127.0.0.1:8743
+uv run investassist --app    # FastAPI UI: http://127.0.0.1:8743
 cd ui
 npm ci
 npm run dev                  # 선택적 Vite/React: http://127.0.0.1:5173

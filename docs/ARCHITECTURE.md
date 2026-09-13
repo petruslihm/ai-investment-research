@@ -1,16 +1,18 @@
 # 구조와 코드 탐색
 
-## 두 실행 경로
+## 실행 경로
 
-`cli.py`는 기본적으로 `demo.create_demo_app`을 시작합니다. 이 경로는 가상 응답을 실제 `final_decision` → `commit_tick` → `load_last_ui_snapshot` → 추천 렌더러에 연결합니다. 모델·제공자 호출은 하지 않습니다. 데모 결과는 `data/demo/demo.duckdb`에만 저장하며 Git에서 제외합니다.
+평가용 Windows 실행기는 Python과 의존성을 준비한 뒤 `scripts/launch_desktop.py`에서 실제 FastAPI/Jinja 연구 UI를 엽니다. Alpaca·Gemini·OpenAI 키가 빠져 있으면 설정 화면으로 안내하고 분석 요청을 차단합니다. 자동 스캔·학습은 시작하지 않으며, 비어 있는 로컬 포트를 사용합니다.
 
-명시적인 `--app`은 FastAPI/Jinja 연구 UI를 엽니다. 연구 경로의 실제 실행은 `v1_cycle.run_v1_cycle`입니다. 완료 시세 → 피처 → 모델 예측 → 기술 필터 → Quant 배분 → Gemini 조사·배분 보정 → 구조화 GPT → 제약 → effective → 원자적 tick 저장 순서입니다. 개발 배경은 [개발 경위](DEVELOPMENT.md)에 설명합니다.
+개발자가 직접 실행할 때는 `investassist --app`을 사용합니다. 연구 경로의 실제 실행은 `v1_cycle.run_v1_cycle`입니다. 완료 시세 → 피처 → 모델 예측 → 기술 필터 → Quant 배분 → Gemini 조사·배분 보정 → 구조화 GPT → 제약 → effective → 원자적 tick 저장 순서입니다. 개발 배경은 [개발 경위](DEVELOPMENT.md)에 설명합니다.
+
+기존 `demo.py`와 `--demo`는 가상 입력의 회귀 검사 경로로 남아 있습니다. 평가자에게 제공하는 실행기는 이 경로를 사용하지 않습니다.
 
 ## 코드를 짧게 보는 순서
 
 | 파일 | 확인할 설계 |
 |---|---|
-| `src/trading_system/demo.py` | 명시적 합성 입력·네 시나리오·실제 저장 경로 |
+| `scripts/windows_bootstrap.ps1`, `scripts/launch_desktop.py` | Python 준비·실제 UI 시작·필수 API 확인 |
 | `src/trading_system/market/decision_data.py` | 확정 종가와 미완성 관측·가격 출처·입력 fingerprint |
 | `src/trading_system/recommendations.py` | 구조화 추천과 미보유/보유/평가 불가 의미 |
 | `src/trading_system/final_decision.py` | 종목 집합·방향·단위·순위 검증, 제약 적용, canonical report |
