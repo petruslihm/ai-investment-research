@@ -4,7 +4,7 @@
 
 평가용 Windows 실행기는 Python과 의존성을 준비한 뒤 `scripts/launch_desktop.py`에서 실제 FastAPI/Jinja 연구 UI를 엽니다. Alpaca·Gemini·OpenAI 키가 빠져 있으면 설정 화면으로 안내하고 분석 요청을 차단합니다. 자동 스캔·학습은 시작하지 않으며, 비어 있는 로컬 포트를 사용합니다.
 
-개발자가 직접 실행할 때는 `investassist --app`을 사용합니다. 연구 경로의 실제 실행은 `v1_cycle.run_v1_cycle`입니다. 완료 시세 → 피처 → 모델 예측 → 기술 필터 → Quant 배분 → Gemini 조사·배분 보정 → 구조화 GPT → 제약 → effective → 원자적 tick 저장 순서입니다. 개발 배경은 [개발 경위](DEVELOPMENT.md)에 설명합니다.
+개발자가 직접 실행할 때는 `investassist --app`을 사용합니다. 연구 경로의 실제 실행은 `v1_cycle.run_v1_cycle`입니다. 완료 시세 → 피처 → 모델 예측 → 기술 필터 → Quant 배분 → Gemini 조사·배분 보정 → 구조화 GPT → 제약 → effective → 원자적 tick 저장 순서입니다.
 
 기존 `demo.py`와 `--demo`는 가상 입력의 회귀 검사 경로로 남아 있습니다. 평가자에게 제공하는 실행기는 이 경로를 사용하지 않습니다.
 
@@ -32,4 +32,6 @@
 
 `decision_comparison_v1` 관측에는 입력 ID·시각·각 단계와 화면 snapshot이 같은 tick transaction으로 저장됩니다. 앱이 다시 열리면 이 snapshot을 읽어 서로 다른 실행의 수치를 섞지 않습니다. 현재 계약은 `final_decision_v2`이며 공개본은 현재 계약·동일 입력 guard만 재개합니다. 운영용 과거 패키지 마이그레이션은 포함하지 않습니다.
 
-판단과 배분의 검증은 통계적 예측 확률 검증이 아닙니다. LLM 품질·자신감 점수는 자가평가이며 상승 확률로 보증하지 않습니다.
+LLM 품질·자신감 점수는 자가평가이며 상승 확률로 보증하지 않습니다.
+
+[문서 목차로 돌아가기](../README.md#문서-읽는-순서)

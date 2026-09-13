@@ -9,7 +9,18 @@
 
 **해당 프로그램은 저의 두번째 프로그램이었고, 현재는 머신러닝의 기능을 활용하여 퀀트로 후보를 걸러내는 능력을 높인 세번째 프로그램을 개발중에 있고, 현재 개인적으로 사용중에 있습니다.**
 
-[첫번째 프로그램-> 두번째(현재) 프로그램 문제 해결 사례](docs/CASE_STUDIES.md)
+## 문서 읽는 순서
+
+먼저 이 페이지의 사용 흐름과 화면을 확인한 뒤, **1 → 4** 순서로 읽으면 개발 배경부터 문제 해결, 구현, 검증 범위까지 이어집니다. 설치 안내와 UI 기술 문서는 필요한 경우에만 확인하면 됩니다.
+
+| 순서 | 문서 | 확인할 내용 |
+|---|---|---|
+| 1 | [개발 경위와 세 프로그램의 차이](docs/DEVELOPMENT.md) | 왜 API 기반으로 다시 만들었는지, 세 프로그램의 차이와 작성자 역할 |
+| 2 | [문제 해결 사례](docs/CASE_STUDIES.md) | 입력 고정·판단과 화면의 일치·미확정 값·모델 지표 문제를 해결한 방법 |
+| 3 | [구조와 코드 탐색](docs/ARCHITECTURE.md) | 데이터 수집부터 판단 검증·저장까지의 연결과 구현 위치 |
+| 4 | [평가 범위와 근거](docs/EVALUATION.md) | 코드와 검사로 확인할 수 있는 동작, 아직 검증하지 않은 범위 |
+| 실행할 때 | [설치와 실행 안내](docs/RUNNING.md) | Windows 자동 설치·필수 API 설정·실제 분석 순서 |
+| 기술 참고 | [UI stack](docs/UI_STACK.md) | 기본 화면과 선택적 React 클라이언트의 구성·라이선스 |
 
 ## 사용 흐름
 0
@@ -76,17 +87,15 @@ API가 연결되지 않았는데 실행을 시킴으로써 시간과 토큰을 �
 
 GPT 호출 실패나 잘못된 응답은 대체 결과의 출처와 함께 표시합니다. 평가할 수 없는 보유 자산은 **미보유 0으로 바꾸지 않고 미확정 값(`null`)으로 유지**해, 입력 누락을 정상 판단으로 오인하지 않도록 합니다.
 
-### 3.
+### 3. 구현 코드와 테스트
 
 | 확인할 내용 | 코드 · 테스트 |
 |---|---|
 | 판단 검증·배분 제약 | [판단 처리](src/trading_system/final_decision.py) · [데모 테스트](tests/test_submission_demo.py) |
 | 실패 처리·미확정 보유 | [추천 데이터](src/trading_system/recommendations.py) · [파이프라인 테스트](tests/test_v1_pipeline.py) |
 | 가격 시점·출처 | [가격 데이터](src/trading_system/market/decision_data.py) · [시점 테스트](tests/test_price_provenance.py) |
-| 단계별 저장·복원 | [기록 저장](src/trading_system/storage/ticks.py) · [구조 설명](docs/ARCHITECTURE.md) |
-| 모델 평가·출처 표시 | [평가 무결성 테스트](tests/test_evaluation_integrity.py) · [평가 범위](docs/EVALUATION.md) |
-
-</details>
+| 단계별 저장·복원 | [기록 저장](src/trading_system/storage/ticks.py) |
+| 모델 평가·출처 표시 | [평가 무결성 테스트](tests/test_evaluation_integrity.py) |
 
 ### 4. 포트폴리오 기능
 
@@ -119,7 +128,5 @@ Ridge·LightGBM·LSTM·온라인 SGD로 5·10·20일 구간의 수익률을 예�
 | OpenAI | OpenAI API Key | GPT 조사·최종 판단 검토 |
 
 키가 없거나 사용 권한·할당량이 부족하면 전체 리서치를 실행할 수 없습니다. 실제 호출에는 제공자별 비용이 발생할 수 있습니다. SEC 공시 조회에는 별도로 연락처 이메일을 설정하며, 카카오 알림은 선택 기능입니다.
-
-[상세 실행 안내](docs/RUNNING.md) — 필수 설정, 분석 순서, 저장 위치, 종료와 문제 해결.
 
 **기술 스택:** Python · FastAPI/Jinja · DuckDB · pandas/NumPy · scikit-learn/LightGBM/PyTorch · pytest · uv

@@ -2,7 +2,7 @@
 
 ## 기본 제출 경로
 
-Windows 실행 파일은 아래의 실제 연구 UI를 엽니다. 직접 실행할 때는 `investassist --app`을 사용합니다. Node.js는 필요하지 않으며, 실제 분석에는 Alpaca·Gemini·OpenAI API가 모두 필요합니다. [설치와 실행 안내](RUNNING.md)
+Windows 실행 파일은 아래의 기본 연구 UI를 엽니다. 기본 화면에는 Node.js가 필요하지 않습니다.
 
 ## 구성
 
@@ -41,4 +41,6 @@ npm ci
 npm run dev                  # 선택적 Vite/React: http://127.0.0.1:5173
 ```
 
-Vite base는 `/app/`입니다. 개발 시 `http://localhost:5173/app/`을 사용합니다. Production build를 만든 뒤 FastAPI를 재시작하면 `http://127.0.0.1:8743/app/`에서도 열 수 있습니다. 자세한 설정과 빌드 순서는 [실행 안내](RUNNING.md)를 참고하세요.
+Vite base는 `/app/`입니다. 개발 시 `http://localhost:5173/app/`을 사용합니다. Production build를 만든 뒤 FastAPI를 재시작하면 `http://127.0.0.1:8743/app/`에서도 열 수 있습니다.
+
+[문서 목차로 돌아가기](../README.md#문서-읽는-순서)
